@@ -17,6 +17,7 @@ export function ConfirmDialog({
   confirmLabel,
   confirmDisabled = false,
   onConfirm,
+  onAfterCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,10 +26,14 @@ export function ConfirmDialog({
   confirmLabel: string;
   confirmDisabled?: boolean;
   onConfirm: () => void;
+  onAfterCloseAutoFocus?: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-sm"
+        onAfterCloseAutoFocus={onAfterCloseAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
