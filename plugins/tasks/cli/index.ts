@@ -1587,9 +1587,10 @@ export function registerTasksCli(
                   "(none)",
                 )}`,
                 `Attached threads\n${table(
-                  ["THREAD", "STATUS", "PRESET", "TITLE"],
+                  ["THREAD", "MAIN", "STATUS", "PRESET", "TITLE"],
                   taskThreads.map((thread) => [
                     thread.threadId,
+                    thread.isMain ? "main" : "",
                     thread.liveStatus,
                     thread.presetName,
                     thread.title,
@@ -2628,6 +2629,11 @@ export function registerTasksCli(
               description:
                 "Thread to attach; defaults to BB_THREAD_ID or the invoking thread",
             },
+            main: {
+              type: "boolean",
+              description:
+                "Also make it the task's main thread, replacing any current main thread",
+            },
             json: JSON_OPTION,
           },
           run(input, ctx) {
@@ -2646,11 +2652,15 @@ export function registerTasksCli(
                     delegationRpcContract.taskThreadsAttach.input.parse({
                       taskId: task.id,
                       threadId,
+                      main: input.options.main === true,
                     }),
                   ),
                 );
-              return input.options.json
-                ? JSON.stringify({ task, ...result })
+              if (input.options.json) {
+                return JSON.stringify({ task, ...result });
+              }
+              return result.isMain
+                ? `Attached ${result.threadId} to ${task.key} as its main thread`
                 : `Attached ${result.threadId} to ${task.key}`;
             });
           },
@@ -2688,9 +2698,84 @@ export function registerTasksCli(
                     }),
                   ),
                 );
+              if (input.options.json) {
+                return JSON.stringify({ task, ...result });
+              }
+              return result.wasMain
+                ? `Detached ${result.threadId} from ${task.key}. It was the main thread; ${task.key} has no main thread until you set one with bb tasks main set.`
+                : `Detached ${result.threadId} from ${task.key}`;
+            });
+          },
+        }),
+
+        main: groupCommand("main", "Set or clear a task's main thread", [
+          ["set", "Make an attached thread the task's main thread"],
+          ["clear", "Remove the task's main thread marker"],
+        ]),
+        "main set": cliCommand({
+          summary: "Make an attached thread the task's main thread",
+          description:
+            "The task shows its main thread at the top of the task page. Setting a new one replaces the current main thread.",
+          positionals: [KEY_POSITIONAL],
+          options: {
+            thread: {
+              type: "string",
+              placeholder: "thread-id",
+              aliases: ["thread-id"],
+              description:
+                "Attached thread to mark; defaults to BB_THREAD_ID or the invoking thread",
+            },
+            json: JSON_OPTION,
+          },
+          run(input, ctx) {
+            return guard(async () => {
+              const task = await resolveTask(
+                domain,
+                input.positionals["key-or-id"],
+              );
+              const threadId = resolveInvokingThreadId(
+                input.options.thread,
+                ctx,
+              );
+              const result =
+                delegationRpcContract.taskThreadsSetMain.output.parse(
+                  await delegationHandlers(bb, store).taskThreadsSetMain(
+                    delegationRpcContract.taskThreadsSetMain.input.parse({
+                      taskId: task.id,
+                      threadId,
+                    }),
+                  ),
+                );
               return input.options.json
                 ? JSON.stringify({ task, ...result })
-                : `Detached ${result.threadId} from ${task.key}`;
+                : `${result.mainThreadId} is now the main thread of ${task.key}`;
+            });
+          },
+        }),
+        "main clear": cliCommand({
+          summary: "Remove the task's main thread marker",
+          description:
+            "The thread stays attached. No other thread becomes main.",
+          positionals: [KEY_POSITIONAL],
+          options: { json: JSON_OPTION },
+          run(input) {
+            return guard(async () => {
+              const task = await resolveTask(
+                domain,
+                input.positionals["key-or-id"],
+              );
+              const result =
+                delegationRpcContract.taskThreadsSetMain.output.parse(
+                  await delegationHandlers(bb, store).taskThreadsSetMain(
+                    delegationRpcContract.taskThreadsSetMain.input.parse({
+                      taskId: task.id,
+                      threadId: null,
+                    }),
+                  ),
+                );
+              return input.options.json
+                ? JSON.stringify({ task, ...result })
+                : `${task.key} has no main thread`;
             });
           },
         }),
@@ -2715,9 +2800,10 @@ export function registerTasksCli(
               return input.options.json
                 ? JSON.stringify({ task, taskThreads: result.taskThreads })
                 : table(
-                    ["THREAD", "STATUS", "PRESET", "TITLE"],
+                    ["THREAD", "MAIN", "STATUS", "PRESET", "TITLE"],
                     result.taskThreads.map((thread) => [
                       thread.threadId,
+                      thread.isMain ? "main" : "",
                       thread.liveStatus,
                       thread.presetName,
                       thread.title,

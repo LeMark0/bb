@@ -107,6 +107,28 @@ describe("task thread lifecycle", () => {
     await fixture.harness.dispose();
   });
 
+  it("keeps the main marker while its thread is archived, fails, or is deleted", async () => {
+    const fixture = trackedThreadFixture("working", "active");
+    fixture.store.tasks.setMainTaskThread(fixture.taskId, "thr_worker");
+    await registerLifecycle(fixture.bb, fixture.store);
+
+    const thread = makeThreadResponse({ id: "thr_worker" });
+    await fixture.harness.emitThreadEvent("thread.archived", { thread });
+    await fixture.harness.emitThreadEvent("thread.failed", {
+      thread,
+      error: "boom",
+    });
+    await fixture.harness.emitThreadEvent("thread.deleted", {
+      thread: makeThreadResponse({ id: "thr_worker", deletedAt: Date.now() }),
+    });
+
+    expect(fixture.store.tasks.getTaskThread(fixture.taskThreadId)).toEqual(
+      expect.objectContaining({ isMain: true, liveStatus: "completed" }),
+    );
+
+    await fixture.harness.dispose();
+  });
+
   it("recovers a failed thread without recording failure as terminal", async () => {
     const fixture = trackedThreadFixture("working", "active");
     await registerLifecycle(fixture.bb, fixture.store);

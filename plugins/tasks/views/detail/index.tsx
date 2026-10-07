@@ -26,6 +26,8 @@ import {
   PropertiesRail,
   type TaskPropertyUpdate,
 } from "./rail.js";
+import { useLiveThreads } from "./live-threads.js";
+import { ThreadShortcutRow, useMainThread } from "./main-thread.js";
 import { ThreadsSection } from "./threads.js";
 import { DetailToasts, useDetailToasts } from "./toast.js";
 import { DelayedLoading } from "@/components/ui/delayed-loading";
@@ -200,6 +202,7 @@ function TaskDetail({ task }: { task: Task }) {
   const { toasts, push, dismiss } = useDetailToasts();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const subtasksRef = useRef<HTMLElement>(null);
+  const threadsSectionRef = useRef<HTMLElement>(null);
 
   const [draft, setDraft] = useState<{ taskId: string; markdown: string }>();
   const rpcRef = useRef(rpc);
@@ -370,15 +373,23 @@ function TaskDetail({ task }: { task: Task }) {
 
   const mentionItems = useMentionItems();
   const navigate = useBbNavigate();
+  const liveThreads = useLiveThreads();
+  const mainThread = useMainThread(threads.data, liveThreads);
+  const showThreads = () => {
+    const section = threadsSectionRef.current;
+    if (!section) return;
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    section.focus({ preventScroll: true });
+  };
 
   const descriptionValue =
     draft && draft.taskId === task.id ? draft.markdown : task.description;
   const parentTask = parent.data ?? null;
 
   return (
-    <div className="@container flex min-h-full flex-col bg-surface-recessed-solid p-3">
-      <div className="flex flex-1 items-stretch rounded-lg border border-border bg-card shadow-2xs">
-        <div className="mx-auto w-full min-w-0 max-w-[55rem] flex-1 px-7 pb-16 pt-8 @3xl:px-13 @3xl:pt-11">
+    <div className="@container flex min-h-full flex-col bg-surface-recessed-solid">
+      <div className="m-2 flex flex-1 items-stretch rounded-lg border border-border bg-card shadow-2xs @xs:m-3">
+        <div className="mx-auto w-full min-w-0 max-w-[55rem] flex-1 px-3 pb-16 pt-8 @xs:px-7 @3xl:px-13 @3xl:pt-11">
           {parentTask || subtasks.data?.length ? (
             <div className="mb-4 flex flex-wrap items-center gap-2">
               {parentTask ? (
@@ -413,6 +424,15 @@ function TaskDetail({ task }: { task: Task }) {
             task={task}
             onSave={(title) => void updateTask({ title })}
           />
+
+          {threads.data ? (
+            <ThreadShortcutRow
+              threads={threads.data}
+              main={mainThread}
+              live={liveThreads}
+              onShowThreads={showThreads}
+            />
+          ) : null}
 
           <InlineProperties
             task={task}
@@ -491,11 +511,21 @@ function TaskDetail({ task }: { task: Task }) {
           {(threads.data ?? []).length > 0 ? (
             <div className="mt-6">
               <ThreadsSection
+                ref={threadsSectionRef}
                 threads={threads.data ?? []}
+                live={liveThreads}
+                main={mainThread}
                 pullRequests={pullRequests.data?.pullRequests}
                 unavailableThreadIds={
                   pullRequests.data?.unavailableThreadIds ?? []
                 }
+                onMakeMain={async (thread) => {
+                  await delegationRpc.call("taskThreadsSetMain", {
+                    taskId: task.id,
+                    threadId: thread.threadId,
+                  });
+                  threads.refresh();
+                }}
                 onDetach={async (thread) => {
                   await delegationRpc.call("taskThreadsDetach", {
                     taskId: task.id,

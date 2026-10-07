@@ -62,7 +62,52 @@ describe("tasks storage", () => {
             "SELECT COUNT(*) AS count FROM schema_version",
           )
           .get()?.count,
-      ).toBe(8);
+      ).toBe(9);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("upgrades existing attachments without marking any thread main", async () => {
+    const { db, harness } = setup();
+    try {
+      const store = createTasksStore(db);
+      const project = store.createProject({
+        name: "Legacy",
+        prefix: "LEG",
+        color: "blue",
+      });
+      const task = store.createTask({ projectId: project.id, title: "Old" });
+      db.exec(`
+        DROP INDEX idx_task_threads_one_main;
+        ALTER TABLE task_threads DROP COLUMN is_main;
+        DELETE FROM schema_version WHERE version = 9;
+      `);
+      db.prepare(
+        `INSERT INTO task_threads (id, task_id, thread_id, preset_name, title, live_status, attached_at, updated_at)
+         VALUES ('01HZZZZZZZZZZZZZZZZZZZZZL1', ?, 'thr_legacy', 'Manager', 'Legacy manager', 'idle', '2026-07-15T00:00:00.000Z', '2026-07-15T00:00:00.000Z')`,
+      ).run(task.id);
+
+      const upgraded = createTasksStore(db);
+
+      expect(upgraded.listTaskThreads(task.id)).toEqual([
+        expect.objectContaining({ threadId: "thr_legacy", isMain: false }),
+      ]);
+      upgraded.upsertTaskThread({
+        taskId: task.id,
+        threadId: "thr_other",
+        presetName: "Attached",
+        title: "Other",
+        liveStatus: "idle",
+      });
+      upgraded.setMainTaskThread(task.id, "thr_legacy");
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE task_threads SET is_main = 1 WHERE task_id = ? AND thread_id = 'thr_other'",
+          )
+          .run(task.id),
+      ).toThrow(/UNIQUE constraint failed/);
     } finally {
       await harness.dispose();
     }

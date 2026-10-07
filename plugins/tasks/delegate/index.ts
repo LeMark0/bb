@@ -343,6 +343,7 @@ export function handlers(
         .catch((error: unknown) => mapSpawnTargetError(error, preset));
 
       const taskThread = store.transaction(() => {
+        const firstAttachment = !store.tasks.hasTaskThreads(task.id);
         const attached = store.tasks.upsertTaskThread({
           taskId: task.id,
           threadId: thread.id,
@@ -350,6 +351,9 @@ export function handlers(
           title,
           liveStatus: "starting",
         });
+        if (firstAttachment) {
+          store.tasks.setMainTaskThread(task.id, thread.id);
+        }
 
         if (task.status === "backlog" || task.status === "todo") {
           store.tasks.updateTask(task.id, { status: "in_progress" });
@@ -398,17 +402,22 @@ export function handlers(
         MAX_DELEGATED_THREAD_TITLE_WIDTH,
       );
 
-      store.tasks.upsertTaskThread({
-        taskId: task.id,
-        threadId: thread.id,
-        presetName: MANUAL_PRESET_NAME,
-        title,
-        liveStatus: taskThreadLiveStatus(thread),
+      const attached = store.transaction(() => {
+        const upserted = store.tasks.upsertTaskThread({
+          taskId: task.id,
+          threadId: thread.id,
+          presetName: MANUAL_PRESET_NAME,
+          title,
+          liveStatus: taskThreadLiveStatus(thread),
+        });
+        return input.main
+          ? (store.tasks.setMainTaskThread(task.id, thread.id) ?? upserted)
+          : upserted;
       });
 
       publishThreadsChanged(bb, task.id);
       publishTasksChanged(bb, task.id, task.projectId);
-      return { threadId: thread.id };
+      return { threadId: attached.threadId, isMain: attached.isMain };
     },
 
     async taskThreadsDetach(input) {
@@ -426,7 +435,16 @@ export function handlers(
 
       publishThreadsChanged(bb, task.id);
       publishTasksChanged(bb, task.id, task.projectId);
-      return { threadId: taskThread.threadId };
+      return { threadId: taskThread.threadId, wasMain: taskThread.isMain };
+    },
+
+    async taskThreadsSetMain(input) {
+      const task = requireTask(store.tasks, input.taskId);
+      const main = store.tasks.setMainTaskThread(task.id, input.threadId);
+
+      publishThreadsChanged(bb, task.id);
+      publishTasksChanged(bb, task.id, task.projectId);
+      return { mainThreadId: main?.threadId ?? null };
     },
   };
 }

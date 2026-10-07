@@ -67,6 +67,7 @@ function thread(
     presetName: "Sonnet · high",
     title: "Worker",
     liveStatus,
+    isMain: false,
     attachedAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
   };

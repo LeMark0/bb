@@ -268,8 +268,10 @@ and the `bb tasks` command. Common agent operations are:
   bb tasks comment <key-or-id> (--body <markdown> | --body-file <path>) [--json]
   bb tasks attachment add <key-or-comment-id> --file <path> [--json]
   bb tasks attachment get <attachment-id> --out <path> [--json]
-  bb tasks attach <key-or-id> [--thread <thread-id>] [--json]
+  bb tasks attach <key-or-id> [--thread <thread-id>] [--main] [--json]
   bb tasks detach <key-or-id> [--thread <thread-id>] [--json]
+  bb tasks main set <key-or-id> [--thread <thread-id>] [--json]
+  bb tasks main clear <key-or-id> [--json]
   bb tasks update <key-or-id> --status in_review [--json]
   bb tasks update <key-or-id> (--parent <parent-key-or-id> | --no-parent) [--json]
 
@@ -277,9 +279,14 @@ Run `bb tasks --help` for project, folder, task, label, attachment, and demo-dat
 commands, plus preset management, delegation, and attached-thread inspection.
 Delegated threads are attached automatically; use `bb tasks attach` only when
 work started outside Tasks, and `bb tasks detach` when a thread is done with a
-task or a respawned worker replaced it. `bb tasks threads <key>` lists live
-threads first, newest first. Task update resolves both task keys and IDs for
-`--parent`; use `--no-parent` to promote a subtask to the top level. File paths
+task or a respawned worker replaced it. The first dispatch to a task with no
+attached threads becomes its main thread; later dispatches and plain attaches
+never change it. A replacement manager attaches with `--main`; `bb tasks main
+set` and `main clear` change or remove the marker, and detaching the main
+thread leaves the task without one. `bb tasks threads <key>` lists the main
+thread first, then live threads, newest first. Task update resolves both task
+keys and IDs for `--parent`; use `--no-parent` to promote a subtask to the top
+level. File paths
 in tasks commands resolve on the invoking machine (the thread's machine inside
 an agent thread, otherwise the server's); pass `--machine <id-or-name>` to
 target another enrolled machine.

@@ -91,9 +91,10 @@ machine; pass `--machine <id-or-name>` to target another enrolled machine.
 | `bb tasks attachment add\|get\|list\|remove`   | Add, fetch, list, or remove attachments. Referenced attachments require `remove --remove-references`.                                      |
 | `bb tasks preset list\|create\|update\|delete` | Manage reusable agent execution presets.                                                                                                   |
 | `bb tasks delegate <key>`                      | Start and attach a new agent thread using a preset.                                                                                        |
-| `bb tasks attach <key-or-id>`                  | Attach the current bb thread to a task when it was not delegated from Tasks.                                                               |
+| `bb tasks attach <key-or-id>`                  | Attach the current bb thread to a task when it was not delegated from Tasks; `--main` also makes it the task's main thread.                |
 | `bb tasks detach <key-or-id>`                  | Detach the current bb thread (or `--thread <id>`) from a task, for example a dead predecessor after a respawn.                             |
-| `bb tasks threads <key>`                       | List the bb threads attached to a task: live threads first, newest first.                                                                  |
+| `bb tasks main set\|clear <key-or-id>`         | Make an attached thread the task's main thread, replacing any current one, or remove the marker. Threads stay attached.                    |
+| `bb tasks threads <key>`                       | List the bb threads attached to a task: the main thread first, then live threads, newest first.                                            |
 | `bb tasks label create\|list\|delete`          | Manage project-scoped labels.                                                                                                              |
 | `bb tasks seed-demo --yes`                     | Create sample folders, projects, labels, tasks, and comments for evaluation.                                                               |
 
@@ -127,8 +128,19 @@ If work begins outside the Delegate action, the agent can associate its current
 thread with `bb tasks attach KEY`. The inverse is `bb tasks detach KEY
 [--thread <id>]`, and each thread card on the task page has a detach control;
 use either to drop a thread that died or moved on to other work. The task
-page and `bb tasks threads` list live threads before completed or failed ones,
-newest first.
+page and `bb tasks threads` list the main thread first, then live threads
+before completed or failed ones, newest first.
+
+A task can have one main thread, linked under the task title on the task page
+and in the thread side panel. The first dispatch to a task with no attached
+threads becomes its main thread. Later dispatches and plain attaches never
+change it, and Tasks never infers one from thread hierarchy or preset names.
+Choose one explicitly with **Make main** on a thread card,
+`bb tasks main set KEY [--thread <id>]` or `bb tasks attach KEY --main`, and
+remove it with `bb tasks main clear KEY`. Detaching the main thread removes the
+marker without promoting another thread. Without a main thread, the task page
+links a single attached thread directly or lists several in a **Threads**
+menu.
 
 ## Task mentions
 

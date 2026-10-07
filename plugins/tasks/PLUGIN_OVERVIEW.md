@@ -6,7 +6,7 @@ Turn a plan into tracked tasks, hand each task to an agent, and see the worker's
 - Projects with key prefixes such as `PROD-1`, nested folders, labels, priorities, due dates, subtasks, and file attachments.
 - Markdown comments with a **Notify last responding agent** switch. The comment goes to the worker thread and resumes it when idle.
 - A **Delegate** menu that starts a worker thread from a preset. A preset sets the provider, model, reasoning level, permission mode, and instructions.
-- Live thread cards on each task and a **Task** panel action inside a thread.
+- Live thread cards on each task, a link to the task's main thread under its title, and a **Task** panel action inside a thread.
 
 ## How it works
 
@@ -16,6 +16,6 @@ Type `@` in the composer and choose **Tasks** to send a task as context. Agents 
 
 ## For agents
 
-The `bb tasks` CLI covers the full tracker: `create`, `list`, `show`, `update`, `move`, `comment`, `attachment`, `preset`, `delegate`, `attach`, `detach`, `threads`, `label`, `project`, and `folder`. Add `--json` for machine-readable output. The bundled `tasks` skill tells workers to read the task, comment at milestones, attach artifacts, and move finished work to `in_review`.
+The `bb tasks` CLI covers the full tracker: `create`, `list`, `show`, `update`, `move`, `comment`, `attachment`, `preset`, `delegate`, `attach`, `detach`, `main`, `threads`, `label`, `project`, and `folder`. Add `--json` for machine-readable output. The bundled `tasks` skill tells workers to read the task, comment at milestones, attach artifacts, and move finished work to `in_review`.
 
 Presets are user-defined. Create at least one before you delegate.

@@ -69,13 +69,13 @@ interface TaskPropertiesProps {
 
 function LabelChip({ label }: { label: Label }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground">
       <span
         aria-hidden
-        className="size-1.5 rounded-full"
+        className="size-1.5 shrink-0 rounded-full"
         style={{ backgroundColor: label.color }}
       />
-      {label.name}
+      <span className="truncate">{label.name}</span>
     </span>
   );
 }
@@ -618,7 +618,7 @@ export function PropertiesRail({
 }
 
 const CHIP_CLASS =
-  "inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground hover:border-input";
+  "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground hover:border-input";
 
 export function InlineProperties({
   task,
@@ -678,7 +678,8 @@ export function InlineProperties({
         taskId={task.id}
         presets={presets}
         onError={onError}
-        className="ml-auto max-w-56"
+        align="start"
+        className="max-w-56"
       />
     </div>
   );

@@ -97,6 +97,27 @@ For task dispatch and execution presets, read
    bb tasks detach ABC-12 --thread thr_dead_predecessor
    ```
 
+   A task can have one main thread, shown at the top of the task page. The
+   first dispatch to a task with no attached threads becomes its main thread.
+   Nothing else picks one: a later dispatch, a plain attach, thread hierarchy
+   and preset names never do. Workers attach without `--main`. A replacement
+   manager attaches with `--main`, which replaces the current main thread:
+
+   ```sh
+   bb tasks attach ABC-12 --main
+   ```
+
+   Change or remove the marker explicitly. `main set` accepts any thread
+   already attached to the task and defaults to the current thread; `main
+clear` leaves every thread attached. Detaching the main thread removes the
+   marker and never promotes another thread. `bb tasks threads ABC-12` shows
+   the marker in its MAIN column and as `isMain` in `--json` output:
+
+   ```sh
+   bb tasks main set ABC-12 --thread thr_manager
+   bb tasks main clear ABC-12
+   ```
+
 ## Link tasks in responses
 
 When your answer refers the user to a task — including a task you just

@@ -396,7 +396,7 @@ describe("task delegation", () => {
         taskId: task.id,
         threadId: "thr_existing",
       }),
-    ).resolves.toEqual({ threadId: "thr_existing" });
+    ).resolves.toEqual({ threadId: "thr_existing", isMain: false });
     expect(harness.sdk.callsTo("threads.get")).toEqual([
       [{ threadId: "thr_existing" }],
     ]);
@@ -470,7 +470,7 @@ describe("task thread detach", () => {
         taskId: task.id,
         threadId: "thr_dead",
       }),
-    ).resolves.toEqual({ threadId: "thr_dead" });
+    ).resolves.toEqual({ threadId: "thr_dead", wasMain: false });
 
     expect(
       store.tasks.listTaskThreads(task.id).map((thread) => thread.threadId),
@@ -494,6 +494,205 @@ describe("task thread detach", () => {
         threadId: "thr_dead",
       }),
     ).rejects.toThrow(`Thread thr_dead is not attached to ${task.key}`);
+
+    await harness.dispose();
+  });
+});
+
+function mainThreadFixture(spawnDelayMs: (call: number) => number = () => 0) {
+  let spawned = 0;
+  const host = createFakePluginHost({
+    pluginId: "tasks",
+    sdk: {
+      threads: {
+        spawn: async () => {
+          const call = ++spawned;
+          await new Promise((resolve) =>
+            setTimeout(resolve, spawnDelayMs(call)),
+          );
+          return { id: `thr_dispatch${call}` };
+        },
+        get: async ({ threadId }: { threadId: string }) =>
+          makeThreadResponse({ id: threadId, status: "idle" }),
+      },
+    },
+  });
+  const store = createStore(host.bb);
+  const project = store.tasks.createProject({
+    name: "Main",
+    prefix: "MAIN",
+    color: "blue",
+    linkedBbProjectId: "proj_bb",
+  });
+  const task = store.tasks.createTask({
+    projectId: project.id,
+    title: "Find the manager",
+  });
+  registerDelegation(host.bb, store);
+  const preset = createTestPreset(store);
+  const mainThreadIds = () =>
+    store.tasks
+      .listTaskThreads(task.id)
+      .filter((thread) => thread.isMain)
+      .map((thread) => thread.threadId);
+  return { ...host, store, task, preset, mainThreadIds };
+}
+
+describe("task main thread", () => {
+  it("marks only the first dispatch to a task without threads as main", async () => {
+    const { harness, store, task, preset, mainThreadIds } = mainThreadFixture();
+
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+
+    expect(
+      store.tasks.listTaskThreads(task.id).map((thread) => ({
+        threadId: thread.threadId,
+        isMain: thread.isMain,
+      })),
+    ).toEqual([
+      { threadId: "thr_dispatch1", isMain: true },
+      { threadId: "thr_dispatch2", isMain: false },
+    ]);
+    expect(mainThreadIds()).toEqual(["thr_dispatch1"]);
+
+    await harness.dispose();
+  });
+
+  it("leaves a dispatch unmarked when the task already has attached threads", async () => {
+    const { harness, task, preset, mainThreadIds } = mainThreadFixture();
+    await harness.callRpc("taskThreadsAttach", {
+      taskId: task.id,
+      threadId: "thr_legacy",
+    });
+
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+
+    expect(mainThreadIds()).toEqual([]);
+
+    await harness.dispose();
+  });
+
+  it("marks the thread attached first when two dispatches race", async () => {
+    const { harness, task, preset, mainThreadIds } = mainThreadFixture(
+      (call) => (call === 1 ? 20 : 0),
+    );
+
+    await Promise.all([
+      harness.callRpc("delegate", { taskId: task.id, presetId: preset.id }),
+      harness.callRpc("delegate", { taskId: task.id, presetId: preset.id }),
+    ]);
+
+    expect(mainThreadIds()).toEqual(["thr_dispatch2"]);
+
+    await harness.dispose();
+  });
+
+  it("reassigns, clears, and refuses unattached main threads without touching attachment data", async () => {
+    const { harness, store, task, mainThreadIds } = mainThreadFixture();
+    await harness.callRpc("taskThreadsAttach", {
+      taskId: task.id,
+      threadId: "thr_first",
+    });
+    await harness.callRpc("taskThreadsAttach", {
+      taskId: task.id,
+      threadId: "thr_second",
+    });
+    const attachedBefore = store.tasks
+      .listTaskThreads(task.id)
+      .map(({ threadId, presetName, title, liveStatus, attachedAt }) => ({
+        threadId,
+        presetName,
+        title,
+        liveStatus,
+        attachedAt,
+      }));
+    harness.realtimeSignals.length = 0;
+
+    await expect(
+      harness.callRpc("taskThreadsSetMain", {
+        taskId: task.id,
+        threadId: "thr_first",
+      }),
+    ).resolves.toEqual({ mainThreadId: "thr_first" });
+    await harness.callRpc("taskThreadsSetMain", {
+      taskId: task.id,
+      threadId: "thr_second",
+    });
+    expect(mainThreadIds()).toEqual(["thr_second"]);
+    expect(harness.realtimeSignals).toContainEqual({
+      channel: "threads:changed",
+      payload: { taskId: task.id },
+    });
+
+    await expect(
+      harness.callRpc("taskThreadsSetMain", {
+        taskId: task.id,
+        threadId: "thr_stranger",
+      }),
+    ).rejects.toThrow(`Thread thr_stranger is not attached to ${task.key}`);
+    expect(mainThreadIds()).toEqual(["thr_second"]);
+
+    await expect(
+      harness.callRpc("taskThreadsSetMain", {
+        taskId: task.id,
+        threadId: null,
+      }),
+    ).resolves.toEqual({ mainThreadId: null });
+    expect(mainThreadIds()).toEqual([]);
+    expect(
+      store.tasks
+        .listTaskThreads(task.id)
+        .map(({ threadId, presetName, title, liveStatus, attachedAt }) => ({
+          threadId,
+          presetName,
+          title,
+          liveStatus,
+          attachedAt,
+        })),
+    ).toEqual(attachedBefore);
+
+    await harness.dispose();
+  });
+
+  it("attaches as main on request and leaves plain attaches unmarked", async () => {
+    const { harness, task, mainThreadIds } = mainThreadFixture();
+    await harness.callRpc("taskThreadsAttach", {
+      taskId: task.id,
+      threadId: "thr_worker",
+    });
+    expect(mainThreadIds()).toEqual([]);
+
+    await expect(
+      harness.callRpc("taskThreadsAttach", {
+        taskId: task.id,
+        threadId: "thr_replacement",
+        main: true,
+      }),
+    ).resolves.toEqual({ threadId: "thr_replacement", isMain: true });
+    await harness.callRpc("taskThreadsAttach", {
+      taskId: task.id,
+      threadId: "thr_replacement",
+    });
+
+    expect(mainThreadIds()).toEqual(["thr_replacement"]);
+
+    await harness.dispose();
+  });
+
+  it("detaching the main thread leaves the task without a main thread", async () => {
+    const { harness, task, preset, mainThreadIds } = mainThreadFixture();
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+
+    await expect(
+      harness.callRpc("taskThreadsDetach", {
+        taskId: task.id,
+        threadId: "thr_dispatch1",
+      }),
+    ).resolves.toEqual({ threadId: "thr_dispatch1", wasMain: true });
+
+    expect(mainThreadIds()).toEqual([]);
 
     await harness.dispose();
   });
