@@ -1,4 +1,19 @@
 const DESKTOP_RELEASE_CHANNEL_ENV_NAME = "BB_DESKTOP_RELEASE_CHANNEL";
+const DESKTOP_UPDATES_ENV_NAME = "BB_DESKTOP_UPDATES";
+
+export function resolveDesktopBuildUpdates(env) {
+  const rawUpdates = env[DESKTOP_UPDATES_ENV_NAME]?.trim();
+  if (rawUpdates === undefined || rawUpdates.length === 0) {
+    return "enabled";
+  }
+  if (rawUpdates === "enabled" || rawUpdates === "disabled") {
+    return rawUpdates;
+  }
+
+  throw new Error(
+    `${DESKTOP_UPDATES_ENV_NAME} must be enabled or disabled, got ${rawUpdates}.`,
+  );
+}
 
 export function resolveDesktopReleaseChannel(env) {
   const rawChannel = env[DESKTOP_RELEASE_CHANNEL_ENV_NAME]?.trim();

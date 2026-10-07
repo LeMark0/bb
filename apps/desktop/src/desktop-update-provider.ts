@@ -43,8 +43,28 @@ function resolveBuiltDesktopReleaseChannel(
   );
 }
 
+type DesktopUpdates = "enabled" | "disabled";
+
+function resolveBuiltDesktopUpdates(
+  rawUpdates: string | undefined,
+): DesktopUpdates {
+  if (rawUpdates === undefined || rawUpdates.length === 0) {
+    return "enabled";
+  }
+  if (rawUpdates === "enabled" || rawUpdates === "disabled") {
+    return rawUpdates;
+  }
+
+  throw new Error(
+    `Built desktop updates must be enabled or disabled, got ${String(rawUpdates)}.`,
+  );
+}
+
 export const DESKTOP_RELEASE_CHANNEL = resolveBuiltDesktopReleaseChannel(
   process.env.BB_DESKTOP_RELEASE_CHANNEL,
+);
+export const DESKTOP_UPDATES = resolveBuiltDesktopUpdates(
+  process.env.BB_DESKTOP_UPDATES,
 );
 export const DESKTOP_RELEASE_INFO = createDesktopReleaseInfo(
   DESKTOP_RELEASE_CHANNEL,
@@ -79,11 +99,15 @@ interface ResolveDesktopUpdateSupportArgs {
   canReplaceAppImage: (appImagePath: string) => boolean;
   env: NodeJS.ProcessEnv;
   platform: BbDesktopVersionFeedPlatform;
+  updates: DesktopUpdates;
 }
 
 export function resolveDesktopUpdateSupport(
   args: ResolveDesktopUpdateSupportArgs,
 ): DesktopUpdateSupport {
+  if (args.updates === "disabled") {
+    return { autoUpdate: false, versionCheck: false };
+  }
   if (args.platform === "macos" || args.platform === "windows") {
     return { autoUpdate: true, versionCheck: true };
   }

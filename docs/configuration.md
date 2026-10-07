@@ -207,7 +207,10 @@ desktop app connects to a server it did not start, Settings → Updates lists
 **bb server** (updated in-app on that server's machine) and **bb desktop** (this
 app's own relaunch update) separately. `pnpm dev`, `bb-server`, and a standalone
 `bb-host-daemon` do not offer in-app updates. Updating restarts bb,
-which interrupts running threads; the app and CLI ask first.
+which interrupts running threads; the app and CLI ask first. A desktop app
+built with `BB_DESKTOP_UPDATES=disabled` never checks for, downloads, or
+installs desktop releases; see
+[the desktop README](../apps/desktop/README.md#auto-update).
 
 `BB_APP_UPDATE_MODE`, `BB_APP_INSTALL_KIND`, `BB_APP_SOURCE_ORIGIN`, and
 `BB_APP_SOURCE_COMMIT` are internal markers the launcher passes to its server
