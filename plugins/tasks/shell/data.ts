@@ -204,7 +204,8 @@ interface TasksQuery<T> {
   data: T | undefined;
   error: string | null;
   isLoading: boolean;
-  refresh: () => void;
+  appliedSettlements: number;
+  refresh: () => Promise<void>;
 }
 
 interface TasksQuerySnapshot<T> {
@@ -241,6 +242,7 @@ export function useTasksQuery<T>(
     data: T | undefined;
     error: string | null;
     isLoading: boolean;
+    appliedSettlements: number;
   }>(() => ({
     data:
       options.snapshot === undefined
@@ -248,6 +250,7 @@ export function useTasksQuery<T>(
         : readQuerySnapshot(options.snapshot.name, options.snapshot.schema),
     error: null,
     isLoading: true,
+    appliedSettlements: 0,
   }));
   const seqRef = useRef(0);
   const dataRef = useRef(state.data);
@@ -269,7 +272,12 @@ export function useTasksQuery<T>(
       if (seq !== seqRef.current) return;
       dataDepsKeyRef.current = depsKey;
       dataRef.current = partial;
-      setState({ data: partial, error: null, isLoading: true });
+      setState((current) => ({
+        data: partial,
+        error: null,
+        isLoading: true,
+        appliedSettlements: current.appliedSettlements,
+      }));
     };
     inFlightRef.current += 1;
     const fetching = fetcherRef
@@ -282,7 +290,12 @@ export function useTasksQuery<T>(
           if (seq !== seqRef.current) return;
           dataDepsKeyRef.current = depsKey;
           dataRef.current = data;
-          setState({ data, error: null, isLoading: false });
+          setState((current) => ({
+            data,
+            error: null,
+            isLoading: false,
+            appliedSettlements: current.appliedSettlements + 1,
+          }));
         },
         (error: unknown) => {
           if (seq !== seqRef.current) return;
@@ -292,6 +305,7 @@ export function useTasksQuery<T>(
             data: keepsData ? current.data : undefined,
             error: errorMessage(error),
             isLoading: false,
+            appliedSettlements: current.appliedSettlements + 1,
           }));
         },
       )
