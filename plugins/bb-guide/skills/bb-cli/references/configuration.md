@@ -117,6 +117,12 @@ stable serving checkout before launch. See `docs/debugging-and-qa.md` and
 `bb guide environments`. These source-maintenance commands are separate from
 installed `bb` commands and `.bb-env-setup.sh`.
 
+To package a desktop app from source that never checks for, downloads, or
+installs desktop releases, set `BB_DESKTOP_UPDATES=disabled` at build time:
+`BB_DESKTOP_UPDATES=disabled pnpm exec turbo run package --filter=@bb/desktop`.
+The value is baked into the app. Unset or blank means `enabled`, and any other
+non-blank value fails the build. See `apps/desktop/README.md`.
+
 ## Machine access and isolated data
 
 Machine access `machineServerUrl` is the URL reachable by machines; unset uses

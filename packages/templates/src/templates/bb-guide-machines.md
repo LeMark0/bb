@@ -140,7 +140,9 @@ fails to start. Source checkouts update only from a clean `main` that
 fast-forwards to `origin/main`.
 Desktop users update through the desktop app's relaunch; development servers
 and `bb-server` cannot update themselves. Connected daemons follow the server
-version automatically.
+version automatically. A desktop app built with `BB_DESKTOP_UPDATES=disabled`,
+a build-time setting for self-built packages such as forks, never checks for,
+downloads, or installs desktop releases.
 
 For source installs, `bb updates` shows the checkout commit and explains manual
 Git updates when no update shim is running. It does not compare that checkout

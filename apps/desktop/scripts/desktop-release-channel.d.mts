@@ -1,5 +1,6 @@
 export type DesktopReleaseChannel = "latest" | "nightly";
 export type DesktopBuildPlatform = "macos" | "linux" | "windows";
+export type DesktopBuildUpdates = "enabled" | "disabled";
 
 export interface DesktopUpdateMetadataFileNames {
   linux: "latest-linux.yml" | "nightly-linux.yml";
@@ -18,6 +19,10 @@ export interface DesktopReleaseConfig {
   updateMetadataFileNames: DesktopUpdateMetadataFileNames;
   windowsInstallName: "bb" | "bb-nightly";
 }
+
+export function resolveDesktopBuildUpdates(
+  env: NodeJS.ProcessEnv,
+): DesktopBuildUpdates;
 
 export function resolveDesktopReleaseChannel(
   env: NodeJS.ProcessEnv,

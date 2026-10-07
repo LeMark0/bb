@@ -181,6 +181,7 @@ import {
   createDesktopUpdateFeedUrl,
   DESKTOP_RELEASE_CHANNEL,
   DESKTOP_RELEASE_INFO,
+  DESKTOP_UPDATES,
   resolveDesktopUpdateSupport,
 } from "./desktop-update-provider.js";
 import type { DesktopUpdateService } from "./desktop-update-scheduler.js";
@@ -2927,6 +2928,7 @@ async function runDesktopApp(): Promise<void> {
     canReplaceAppImage,
     env: process.env,
     platform: desktopPlatform,
+    updates: DESKTOP_UPDATES,
   });
   desktopUpdateService = createDesktopUpdateService({
     channel: DESKTOP_RELEASE_CHANNEL,
@@ -3118,6 +3120,10 @@ async function runDesktopApp(): Promise<void> {
   }
   if (desktopUpdateSupport.autoUpdate) {
     desktopAutoUpdateService.start();
+  } else if (DESKTOP_UPDATES === "disabled") {
+    desktopLogger.info(
+      "Desktop updates are disabled in this build (BB_DESKTOP_UPDATES=disabled): bb does not check for, download, or install releases.",
+    );
   } else {
     desktopLogger.info(
       "Desktop auto-install is disabled: only the Linux AppImage build can replace itself. Version checks still report new releases.",

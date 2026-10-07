@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveDesktopBuildUpdates } from "../scripts/desktop-release-channel.mjs";
 import {
   createDesktopUpdateFeedUrl,
   resolveDesktopUpdateSupport,
@@ -29,6 +30,7 @@ describe("desktop update support", () => {
         canReplaceAppImage: neverReplaceable,
         env: {},
         platform: "macos",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: true, versionCheck: true });
   });
@@ -39,6 +41,7 @@ describe("desktop update support", () => {
         canReplaceAppImage: alwaysReplaceable,
         env: { APPIMAGE: APP_IMAGE_PATH },
         platform: "windows",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: true, versionCheck: true });
   });
@@ -49,6 +52,7 @@ describe("desktop update support", () => {
         canReplaceAppImage: alwaysReplaceable,
         env: { APPIMAGE: APP_IMAGE_PATH },
         platform: "linux",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: true, versionCheck: true });
     expect(
@@ -56,6 +60,7 @@ describe("desktop update support", () => {
         canReplaceAppImage: alwaysReplaceable,
         env: {},
         platform: "linux",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: false, versionCheck: true });
     expect(
@@ -63,6 +68,7 @@ describe("desktop update support", () => {
         canReplaceAppImage: alwaysReplaceable,
         env: { APPIMAGE: "  " },
         platform: "linux",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: false, versionCheck: true });
   });
@@ -78,6 +84,7 @@ describe("desktop update support", () => {
         },
         env: { APPIMAGE: APP_IMAGE_PATH },
         platform: "linux",
+        updates: "enabled",
       }),
     ).toEqual({ autoUpdate: false, versionCheck: true });
     expect(checked).toEqual([APP_IMAGE_PATH]);
@@ -93,8 +100,55 @@ describe("desktop update support", () => {
       },
       env: { APPIMAGE: APP_IMAGE_PATH },
       platform: "macos",
+      updates: "enabled",
     });
 
     expect(consulted).toBe(false);
   });
+
+  it.each(["macos", "windows", "linux"] as const)(
+    "turns off checks and installs on %s when the build disables updates",
+    (platform) => {
+      let consulted = false;
+
+      expect(
+        resolveDesktopUpdateSupport({
+          canReplaceAppImage: () => {
+            consulted = true;
+            return true;
+          },
+          env: { APPIMAGE: APP_IMAGE_PATH },
+          platform,
+          updates: "disabled",
+        }),
+      ).toEqual({ autoUpdate: false, versionCheck: false });
+      expect(consulted).toBe(false);
+    },
+  );
+});
+
+describe("desktop build updates setting", () => {
+  it("keeps updates on when BB_DESKTOP_UPDATES is unset or blank", () => {
+    expect(resolveDesktopBuildUpdates({})).toBe("enabled");
+    expect(resolveDesktopBuildUpdates({ BB_DESKTOP_UPDATES: " " })).toBe(
+      "enabled",
+    );
+  });
+
+  it("accepts disabled with surrounding whitespace", () => {
+    expect(
+      resolveDesktopBuildUpdates({ BB_DESKTOP_UPDATES: " disabled " }),
+    ).toBe("disabled");
+  });
+
+  it.each(["0", "false", "off", "Disabled"])(
+    "fails the build for the unsupported value %s",
+    (value) => {
+      expect(() =>
+        resolveDesktopBuildUpdates({ BB_DESKTOP_UPDATES: value }),
+      ).toThrow(
+        `BB_DESKTOP_UPDATES must be enabled or disabled, got ${value}.`,
+      );
+    },
+  );
 });

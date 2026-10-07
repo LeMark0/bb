@@ -394,6 +394,18 @@ unless `BB_DESKTOP_AUTO_UPDATE=1` is set.
 workflow requires the complete signing/notarization secret set before
 publishing nightly desktop assets.
 
+A self-built package that must never offer published releases, such as a
+maintained fork, sets `BB_DESKTOP_UPDATES=disabled` at build time. Like the
+release channel, the value is baked into the Electron bundles: the app then
+neither checks `desktop-version.json` nor starts the Electron updater, so it
+shows no update toast and never downloads or installs a release. Leaving the
+variable unset or blank, or setting it to `enabled`, keeps both update paths.
+Any other non-blank value fails the build.
+
+```bash
+BB_DESKTOP_UPDATES=disabled pnpm exec turbo run package --filter=@bb/desktop
+```
+
 To verify a downloaded or unpacked build:
 
 ```bash
