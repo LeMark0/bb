@@ -16,12 +16,28 @@ export const delegationRpcContract = defineRpcContract({
     output: z.object({ threadId: threadIdSchema }).strict(),
   },
   taskThreadsAttach: {
-    input: z.object({ taskId: idSchema, threadId: threadIdSchema }).strict(),
-    output: z.object({ threadId: threadIdSchema }).strict(),
+    input: z
+      .object({
+        taskId: idSchema,
+        threadId: threadIdSchema,
+        main: z.boolean().default(false),
+      })
+      .strict(),
+    output: z
+      .object({ threadId: threadIdSchema, isMain: z.boolean() })
+      .strict(),
   },
   taskThreadsDetach: {
     input: z.object({ taskId: idSchema, threadId: threadIdSchema }).strict(),
-    output: z.object({ threadId: threadIdSchema }).strict(),
+    output: z
+      .object({ threadId: threadIdSchema, wasMain: z.boolean() })
+      .strict(),
+  },
+  taskThreadsSetMain: {
+    input: z
+      .object({ taskId: idSchema, threadId: threadIdSchema.nullable() })
+      .strict(),
+    output: z.object({ mainThreadId: threadIdSchema.nullable() }).strict(),
   },
 });
 

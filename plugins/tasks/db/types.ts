@@ -94,6 +94,7 @@ export interface TaskThread {
   presetName: string;
   title: string;
   liveStatus: TaskThreadLiveStatus;
+  isMain: boolean;
   attachedAt: string;
   updatedAt: string;
 }

@@ -146,6 +146,7 @@ interface TaskThreadRow {
   preset_name: string;
   title: string;
   live_status: TaskThreadLiveStatus;
+  is_main: number;
   attached_at: string;
   updated_at: string;
 }
@@ -418,6 +419,7 @@ function taskThreadFromRow(row: TaskThreadRow): TaskThread {
     presetName: row.preset_name,
     title: row.title,
     liveStatus: row.live_status,
+    isMain: row.is_main === 1,
     attachedAt: row.attached_at,
     updatedAt: row.updated_at,
   };
@@ -1738,6 +1740,7 @@ export function createTasksStore(db: PluginDatabase) {
         SELECT * FROM task_threads
         WHERE task_id = ?
         ORDER BY
+          is_main DESC,
           CASE WHEN live_status IN ('completed', 'failed') THEN 1 ELSE 0 END,
           attached_at DESC,
           id DESC
@@ -1745,6 +1748,43 @@ export function createTasksStore(db: PluginDatabase) {
       )
       .all(taskId)
       .map(taskThreadFromRow);
+  }
+
+  function hasTaskThreads(taskId: string): boolean {
+    return (
+      db
+        .prepare<[string], { found: number }>(
+          "SELECT 1 AS found FROM task_threads WHERE task_id = ? LIMIT 1",
+        )
+        .get(taskId) !== undefined
+    );
+  }
+
+  const setMainTaskThreadTransaction = db.transaction(
+    (taskId: string, threadId: string | null): TaskThread | null => {
+      const task = requireTask(taskId);
+      const next =
+        threadId === null ? null : getTaskThreadByThreadId(taskId, threadId);
+      if (next === undefined) {
+        throw new Error(`Thread ${threadId} is not attached to ${task.key}`);
+      }
+      const timestamp = nowIso();
+      db.prepare<[string, string]>(
+        "UPDATE task_threads SET is_main = 0, updated_at = ? WHERE task_id = ? AND is_main = 1",
+      ).run(timestamp, taskId);
+      if (next === null) return null;
+      db.prepare<[string, string]>(
+        "UPDATE task_threads SET is_main = 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, next.id);
+      return requireTaskThread(next.id);
+    },
+  );
+
+  function setMainTaskThread(
+    taskId: string,
+    threadId: string | null,
+  ): TaskThread | null {
+    return setMainTaskThreadTransaction(taskId, threadId);
   }
 
   function updateTaskThreadStatus(
@@ -1944,6 +1984,8 @@ export function createTasksStore(db: PluginDatabase) {
     getTaskThreadByThreadId,
     listTaskThreadsByThreadId,
     listTaskThreads,
+    hasTaskThreads,
+    setMainTaskThread,
     updateTaskThreadStatus,
     deleteTaskThread,
     createPreset,

@@ -242,6 +242,12 @@ const MIGRATIONS = [
     ALTER TABLE presets DROP COLUMN service_tier;
     ALTER TABLE presets RENAME COLUMN service_tier_open TO service_tier;
   `,
+  `
+    ALTER TABLE task_threads
+      ADD COLUMN is_main INTEGER NOT NULL DEFAULT 0 CHECK (is_main IN (0, 1));
+    CREATE UNIQUE INDEX idx_task_threads_one_main
+      ON task_threads(task_id) WHERE is_main = 1;
+  `,
 ] as const;
 
 export function initializeTasksSchema(db: PluginDatabase): void {

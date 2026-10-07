@@ -1364,6 +1364,109 @@ describe("bb tasks CLI", () => {
     await harness.dispose();
   });
 
+  it("sets, reports, and clears a task's main thread", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      sdk: {
+        threads: {
+          get: async ({ threadId }: { threadId: string }) => ({
+            id: threadId,
+            title: `Thread ${threadId}`,
+            titleFallback: null,
+            status: "idle",
+          }),
+        },
+      },
+    });
+    await plugin(bb);
+    stdout(
+      await harness.runCli([
+        "project",
+        "create",
+        "--name",
+        "Main",
+        "--prefix",
+        "MN",
+      ]),
+    );
+    stdout(
+      await harness.runCli(["create", "--project", "MN", "--title", "Lead"]),
+    );
+    const help = stdout(await harness.runCli(["--help"]));
+    expect(help).toContain("bb tasks main set");
+    expect(help).toContain("bb tasks main clear");
+
+    expect(
+      stdout(
+        await harness.runCli([
+          "attach",
+          "MN-1",
+          "--thread",
+          "thr_manager",
+          "--main",
+        ]),
+      ),
+    ).toBe("Attached thr_manager to MN-1 as its main thread");
+    expect(
+      stdout(
+        await harness.runCli(["attach", "MN-1", "--thread", "thr_worker"]),
+      ),
+    ).toBe("Attached thr_worker to MN-1");
+    expect(
+      stdout(await harness.runCli(["threads", "MN-1"])).split("\n")[1],
+    ).toMatch(/^thr_manager\s+main\s+idle/);
+
+    expect(
+      JSON.parse(
+        stdout(
+          await harness.runCli([
+            "main",
+            "set",
+            "MN-1",
+            "--thread",
+            "thr_worker",
+            "--json",
+          ]),
+        ),
+      ),
+    ).toMatchObject({ task: { key: "MN-1" }, mainThreadId: "thr_worker" });
+    await expect(
+      harness.runCli(["main", "set", "MN-1", "--thread", "thr_stranger"]),
+    ).resolves.toMatchObject({
+      exitCode: 1,
+      stderr: "Thread thr_stranger is not attached to MN-1\n",
+    });
+
+    expect(
+      stdout(
+        await harness.runCli(["detach", "MN-1", "--thread", "thr_worker"]),
+      ),
+    ).toBe(
+      "Detached thr_worker from MN-1. It was the main thread; MN-1 has no main thread until you set one with bb tasks main set.",
+    );
+    const remaining = JSON.parse(
+      stdout(await harness.runCli(["threads", "MN-1", "--json"])),
+    ).taskThreads;
+    expect(remaining).toEqual([
+      expect.objectContaining({ threadId: "thr_manager", isMain: false }),
+    ]);
+
+    stdout(
+      await harness.runCli(["main", "set", "MN-1", "--thread", "thr_manager"]),
+    );
+    expect(stdout(await harness.runCli(["main", "clear", "MN-1"]))).toBe(
+      "MN-1 has no main thread",
+    );
+    expect(
+      JSON.parse(stdout(await harness.runCli(["threads", "MN-1", "--json"])))
+        .taskThreads,
+    ).toEqual([
+      expect.objectContaining({ threadId: "thr_manager", isMain: false }),
+    ]);
+
+    await harness.dispose();
+  });
+
   it("creates a task with --attach files after validating every source path", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bb-tasks-cli-"));
     const notesPath = join(directory, "notes.txt");

@@ -67,6 +67,7 @@ const workerThread: TaskThread = {
   presetName: "Worker",
   title: "Worker",
   liveStatus: "working",
+  isMain: false,
   attachedAt: "2026-07-15T00:00:00.000Z",
   updatedAt: "2026-07-15T00:00:00.000Z",
 };

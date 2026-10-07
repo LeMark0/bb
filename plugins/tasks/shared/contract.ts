@@ -201,6 +201,7 @@ const taskThreadSchema = z
     presetName: z.string(),
     title: z.string(),
     liveStatus: z.enum(TASK_THREAD_LIVE_STATUSES),
+    isMain: z.boolean(),
     attachedAt: z.string(),
     updatedAt: z.string(),
   })
