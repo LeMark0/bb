@@ -131,7 +131,9 @@ describe("claude item presentation", () => {
       }),
       expect.objectContaining({
         type: "planSteps",
-        steps: [{ step: "Ship the bridge", status: "pending" }],
+        steps: [
+          { step: "Ship the bridge", status: "pending", id: "1", needs: [] },
+        ],
       }),
     ]);
 
@@ -147,7 +149,14 @@ describe("claude item presentation", () => {
       expect.objectContaining({ type: "toolCall", tool: "TaskUpdate" }),
       expect.objectContaining({
         type: "planSteps",
-        steps: [{ step: "Shipping the bridge", status: "active" }],
+        steps: [
+          {
+            step: "Shipping the bridge",
+            status: "active",
+            id: "1",
+            needs: [],
+          },
+        ],
         presentation: expect.objectContaining({
           title: "Shipping the bridge",
         }),
@@ -182,8 +191,8 @@ describe("claude item presentation", () => {
       expect.objectContaining({
         type: "planSteps",
         steps: [
-          { step: "Ship the bridge", status: "completed" },
-          { step: "Review", status: "pending" },
+          { step: "Ship the bridge", status: "completed", id: "1", needs: [] },
+          { step: "Review", status: "pending", id: "3" },
         ],
       }),
     );

@@ -807,7 +807,7 @@ describe("claude tool-result translation (delta path)", () => {
         type: "item/completed",
         item: expect.objectContaining({
           type: "planSteps",
-          steps: [{ step: "Review", status: "active" }],
+          steps: [{ step: "Review", status: "active", id: "1" }],
         }),
       }),
     );

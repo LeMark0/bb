@@ -9,6 +9,7 @@ const taskUpdateStatusSchema = z.enum([
   "completed",
   "deleted",
 ]);
+const taskBlockedBySchema = z.array(z.string()).optional().catch(undefined);
 
 const taskCreateArgsSchema = z
   .object({ subject: z.string(), activeForm: z.string().optional() })
@@ -25,6 +26,8 @@ const taskUpdateArgsSchema = z
     status: taskUpdateStatusSchema.optional(),
     subject: z.string().optional(),
     activeForm: z.string().optional(),
+    addBlocks: z.array(z.string()).optional(),
+    addBlockedBy: z.array(z.string()).optional(),
   })
   .passthrough();
 const taskUpdateOutputSchema = z
@@ -36,6 +39,7 @@ const taskListItemSchema = z
     id: z.string(),
     status: taskUpdateStatusSchema,
     subject: z.string(),
+    blockedBy: taskBlockedBySchema,
   })
   .passthrough();
 const taskListOutputSchema = z
@@ -46,7 +50,12 @@ const taskGetArgsSchema = z.object({ taskId: z.string() }).passthrough();
 const taskGetOutputSchema = z
   .object({
     task: z
-      .object({ id: z.string(), status: taskStatusSchema, subject: z.string() })
+      .object({
+        id: z.string(),
+        status: taskStatusSchema,
+        subject: z.string(),
+        blockedBy: taskBlockedBySchema,
+      })
       .passthrough()
       .nullable(),
   })
@@ -57,6 +66,7 @@ export interface ClaudeTaskPlanItem {
   subject: string;
   activeForm: string | null;
   status: ClaudeTaskStatus;
+  blockedBy: readonly string[] | null;
 }
 
 export type ClaudeTaskPlanState = Map<string, ClaudeTaskPlanItem>;
@@ -83,19 +93,43 @@ function optionalText(value: string | undefined): string | null {
 }
 
 function snapshot(state: ClaudeTaskPlanState): ThreadEventPlanStep[] {
-  const steps: ThreadEventPlanStep[] = [];
-  for (const task of state.values()) {
+  const shown = [...state.values()].flatMap((task) => {
     const text =
       task.status === "in_progress" && task.activeForm !== null
         ? task.activeForm
         : task.subject;
-    if (text.length === 0) continue;
-    steps.push({
+    return text.length === 0 ? [] : [{ task, text }];
+  });
+  const shownIds = new Set(shown.map(({ task }) => task.id));
+  return shown.map(({ task, text }) => {
+    const needs =
+      task.blockedBy !== null && task.blockedBy.every((id) => shownIds.has(id))
+        ? [...task.blockedBy]
+        : undefined;
+    return {
       step: text,
       status: task.status === "in_progress" ? "active" : task.status,
-    });
-  }
-  return steps;
+      id: task.id,
+      ...(needs === undefined ? {} : { needs }),
+    };
+  });
+}
+
+function withBlockers(
+  blockedBy: readonly string[] | null,
+  added: readonly string[],
+): readonly string[] | null {
+  if (blockedBy === null) return null;
+  const missing = [...new Set(added)].filter((id) => !blockedBy.includes(id));
+  return missing.length === 0 ? blockedBy : [...blockedBy, ...missing];
+}
+
+function sameBlockers(
+  left: readonly string[] | null,
+  right: readonly string[] | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return left.length === right.length && left.every((id) => right.includes(id));
 }
 
 function isSameTask(left: ClaudeTaskPlanItem, right: ClaudeTaskPlanItem) {
@@ -103,8 +137,55 @@ function isSameTask(left: ClaudeTaskPlanItem, right: ClaudeTaskPlanItem) {
     left.id === right.id &&
     left.subject === right.subject &&
     left.activeForm === right.activeForm &&
-    left.status === right.status
+    left.status === right.status &&
+    sameBlockers(left.blockedBy, right.blockedBy)
   );
+}
+
+function deleteTask(state: ClaudeTaskPlanState, taskId: string): boolean {
+  if (!state.delete(taskId)) return false;
+  for (const task of state.values()) {
+    if (task.blockedBy?.includes(taskId)) {
+      state.set(task.id, {
+        ...task,
+        blockedBy: task.blockedBy.filter((id) => id !== taskId),
+      });
+    }
+  }
+  return true;
+}
+
+function addBlocks(
+  state: ClaudeTaskPlanState,
+  blockerId: string,
+  blockedIds: readonly string[],
+): void {
+  for (const blockedId of blockedIds) {
+    const blocked = state.get(blockedId);
+    if (blocked !== undefined) {
+      state.set(blockedId, {
+        ...blocked,
+        blockedBy: withBlockers(blocked.blockedBy, [blockerId]),
+      });
+    }
+  }
+}
+
+function listedBlockers(args: {
+  listed: readonly string[] | undefined;
+  previous: readonly string[] | null;
+  listedIds: ReadonlySet<string>;
+  completedBlockersOmitted: boolean;
+}): readonly string[] | null {
+  if (args.listed?.some((id) => !args.listedIds.has(id))) return null;
+  if (args.previous !== null) {
+    return withBlockers(
+      args.previous.filter((id) => args.listedIds.has(id)),
+      args.listed ?? [],
+    );
+  }
+  if (args.listed === undefined || args.completedBlockersOmitted) return null;
+  return args.listed;
 }
 
 export function foldClaudeTaskToolResult(args: {
@@ -133,6 +214,7 @@ export function foldClaudeTaskToolResult(args: {
         subject,
         activeForm: optionalText(parsedArgs.data.activeForm),
         status: "pending",
+        blockedBy: [],
       });
       return snapshot(state);
     }
@@ -148,11 +230,17 @@ export function foldClaudeTaskToolResult(args: {
       }
       const update = parsedArgs.data;
       if (update.status === "deleted") {
-        return state.delete(update.taskId) ? snapshot(state) : null;
+        return deleteTask(state, update.taskId) ? snapshot(state) : null;
       }
       const existing = state.get(update.taskId);
       if (existing === undefined) return null;
-      const next: ClaudeTaskPlanItem = {
+      const blockedIds = update.addBlocks ?? [];
+      const affected = [
+        existing,
+        ...blockedIds.flatMap((id) => state.get(id) ?? []),
+      ];
+      const addBlockedBy = update.addBlockedBy ?? [];
+      state.set(update.taskId, {
         id: update.taskId,
         subject: optionalText(update.subject) ?? existing.subject,
         activeForm:
@@ -160,23 +248,44 @@ export function foldClaudeTaskToolResult(args: {
             ? existing.activeForm
             : optionalText(update.activeForm),
         status: update.status ?? existing.status,
-      };
-      if (isSameTask(existing, next)) return null;
-      state.set(update.taskId, next);
-      return snapshot(state);
+        blockedBy: addBlockedBy.every((id) => state.has(id))
+          ? withBlockers(existing.blockedBy, addBlockedBy)
+          : null,
+      });
+      addBlocks(state, update.taskId, blockedIds);
+      const changed = affected.some((before) => {
+        const after = state.get(before.id);
+        return after === undefined || !isSameTask(before, after);
+      });
+      return changed ? snapshot(state) : null;
     }
     case "TaskList": {
       const parsedOutput = taskListOutputSchema.safeParse(output);
       if (!parsedOutput.success) return null;
-      state.clear();
-      for (const raw of parsedOutput.data.tasks) {
+      const listed = parsedOutput.data.tasks.flatMap((raw) => {
         const task = taskListItemSchema.safeParse(raw);
-        if (!task.success || task.data.status === "deleted") continue;
-        state.set(task.data.id, {
-          id: task.data.id,
-          subject: task.data.subject.trim(),
+        if (!task.success) return [];
+        const { id, subject, status, blockedBy } = task.data;
+        return status === "deleted" ? [] : [{ id, subject, status, blockedBy }];
+      });
+      const listedIds = new Set(listed.map((task) => task.id));
+      const completedBlockersOmitted = listed.some(
+        (task) => task.status === "completed",
+      );
+      const previous = new Map(state);
+      state.clear();
+      for (const task of listed) {
+        state.set(task.id, {
+          id: task.id,
+          subject: task.subject.trim(),
           activeForm: null,
-          status: task.data.status,
+          status: task.status,
+          blockedBy: listedBlockers({
+            listed: task.blockedBy,
+            previous: previous.get(task.id)?.blockedBy ?? null,
+            listedIds,
+            completedBlockersOmitted,
+          }),
         });
       }
       return snapshot(state);
@@ -187,7 +296,9 @@ export function foldClaudeTaskToolResult(args: {
       if (!parsedArgs.success || !parsedOutput.success) return null;
       const task = parsedOutput.data.task;
       if (task === null) {
-        return state.delete(parsedArgs.data.taskId) ? snapshot(state) : null;
+        return deleteTask(state, parsedArgs.data.taskId)
+          ? snapshot(state)
+          : null;
       }
       const existing = state.get(task.id);
       const next: ClaudeTaskPlanItem = {
@@ -195,6 +306,7 @@ export function foldClaudeTaskToolResult(args: {
         subject: task.subject.trim(),
         activeForm: existing?.activeForm ?? null,
         status: task.status,
+        blockedBy: task.blockedBy ?? existing?.blockedBy ?? null,
       };
       if (existing !== undefined && isSameTask(existing, next)) return null;
       state.set(task.id, next);

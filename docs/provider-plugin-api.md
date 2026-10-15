@@ -321,6 +321,21 @@ that value.
   background: boolean, summary?: string } // child turns link by parentRef
 ```
 
+**Plan steps** — each `planSteps` snapshot lists its steps in the
+provider's order:
+
+```ts
+{ step: string, status?: "pending" | "active" | "completed" | "failed",
+  id?: string, needs?: string[] } // needs: ids of steps this one waits for
+```
+
+bb shows a plan in dependency order only when every step has a unique `id`
+and `needs` naming other steps in the same snapshot without a cycle; ties keep
+the provider's order. Otherwise it keeps the provider's order and says why.
+Omit `needs` when the provider has no dependency data; `[]` means the step
+has no prerequisites. A malformed `id` or `needs` is dropped at parse and the
+step stays.
+
 **Presentation** — attached by the bridge at `item.open`, persisted with the
 item so it renders after the plugin is uninstalled or upgraded:
 

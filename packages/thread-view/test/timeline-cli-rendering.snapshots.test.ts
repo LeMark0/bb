@@ -2606,6 +2606,51 @@ describe("timeline CLI rendering snapshots", () => {
     );
   });
 
+  it("prints a plan in dependency order with positions and prerequisites in the verbose timeline", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const timeline = renderActiveTimeline([
+      event.turnStarted(),
+      event.planStepsCompleted({
+        steps: [
+          {
+            id: "verify",
+            step: "Verify both",
+            status: "pending",
+            needs: ["card", "fold"],
+          },
+          {
+            id: "card",
+            step: "Update the card",
+            status: "active",
+            needs: ["contract"],
+          },
+          {
+            id: "contract",
+            step: "Read the contract",
+            status: "completed",
+            needs: [],
+          },
+          {
+            id: "fold",
+            step: "Update the fold",
+            status: "failed",
+            needs: ["contract"],
+          },
+        ],
+      }),
+    ]);
+
+    expect(timeline.text).toContain(
+      [
+        "  Ordered by dependencies.",
+        "  [x] 1. Read the contract",
+        "  [>] 2. Update the card (after 1)",
+        "  [!] 3. Update the fold (after 1)",
+        "  [ ] 4. Verify both (after 2, 3)",
+      ].join("\n"),
+    );
+  });
+
   it("summarizes completed web search and fetch rows without expanding result text", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const timeline = renderIdleTimeline([

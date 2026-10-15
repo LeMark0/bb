@@ -4,6 +4,7 @@ import type {
   ThreadTimelinePendingTodoItemStatus,
 } from "@bb/domain";
 import type { BbSdk } from "@bb/sdk";
+import { formatPlanStepLine, PLAN_STEP_ORDER_CAPTION } from "@bb/thread-view";
 
 interface FetchThreadPendingTodosArgs {
   sdk: Pick<BbSdk, "threads">;
@@ -28,12 +29,7 @@ const STATUS_BULLET: Record<ThreadTimelinePendingTodoItemStatus, string> = {
   in_progress: "[>]",
   pending: "[ ]",
   completed: "[x]",
-};
-
-const STATUS_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
-  in_progress: 0,
-  pending: 1,
-  completed: 2,
+  failed: "[!]",
 };
 
 interface TodoCounts {
@@ -63,10 +59,14 @@ export function printPendingTodos(
       ? `TODOs (${counts.total}):`
       : `TODOs (${counts.completed}/${counts.total} done):`;
   console.log(heading);
-  const ordered = [...pendingTodos.items].sort(
-    (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status],
-  );
-  for (const item of ordered) {
-    console.log(`  ${STATUS_BULLET[item.status]} ${item.text}`);
+  console.log(`  ${PLAN_STEP_ORDER_CAPTION[pendingTodos.order]}`);
+  for (const item of pendingTodos.items) {
+    const line = formatPlanStepLine({
+      order: pendingTodos.order,
+      position: item.position,
+      after: item.after,
+      text: item.text,
+    });
+    console.log(`  ${STATUS_BULLET[item.status]} ${line}`);
   }
 }
