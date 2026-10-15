@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { createStore, Provider } from "jotai";
 import { paletteThreadLifecyclesAtom } from "@/lib/command-palette/palette-preferences";
 import { splitLayoutAtom } from "@/lib/split-layout/atoms";
@@ -42,6 +42,7 @@ import {
 } from "@/lib/plugin-thread-row-status";
 import { makePluginRegistrationSet } from "@/test/fixtures/plugins";
 import { collectPluginAppRegistrations } from "@get-bb/plugin-sdk/internal/plugin-app-collector";
+import { LocationProbe } from "@/test/location-probe";
 
 beforeAll(async () => {
   await import("./ThreadSearchPaletteMode");
@@ -273,11 +274,6 @@ function Handler({ command }: { command: AppCommandId }) {
     return true;
   });
   return null;
-}
-
-function LocationProbe() {
-  const location = useLocation();
-  return <output data-testid="location">{location.pathname}</output>;
 }
 
 const threadUpdatedAt = Date.now();
@@ -1108,9 +1104,9 @@ describe("CommandPalette", () => {
     openThreadSearch();
     await screen.findByRole("combobox", { name: "Search threads" });
     const trigger = screen.getByRole("button", {
-      name: "Filter: Active",
+      name: "Filter and sort: Active, Relevance",
     });
-    expectClasses(trigger, "font-normal", "text-subtle-foreground");
+    expectClasses(trigger, "text-subtle-foreground");
     act(() => trigger.focus());
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     const archived = await screen.findByRole("menuitemcheckbox", {
@@ -1122,8 +1118,9 @@ describe("CommandPalette", () => {
       "active",
       "archived",
     ]);
-    expectText(trigger, "All");
-    expect(trigger.getAttribute("aria-label")).toBe("Filter: All");
+    expect(trigger.getAttribute("aria-label")).toBe(
+      "Filter and sort: All, Relevance",
+    );
     expect(routeNavigateMock).not.toHaveBeenCalled();
     fireEvent.keyDown(archived, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
