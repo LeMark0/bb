@@ -1,3 +1,5 @@
+import { prepareCachedQuery } from "../connection.js";
+import { markThreadPruningPolicyWork } from "./thread-pruning-work.js";
 import { copyProjectAttachmentOwnership } from "./project-attachments.js";
 import {
   and,
@@ -5,7 +7,6 @@ import {
   count,
   desc,
   eq,
-  exists,
   getTableColumns,
   inArray,
   isNotNull,
@@ -13,6 +14,7 @@ import {
   lt,
   ne,
   or,
+  placeholder,
   sql,
   type SQL,
 } from "drizzle-orm";
@@ -386,8 +388,15 @@ export function createThread(
   return thread;
 }
 
+const prepareGetThread = (db: DbQueryConnection) =>
+  db
+    .select()
+    .from(threads)
+    .where(eq(threads.id, placeholder("id")))
+    .prepare();
+
 export function getThread(db: ThreadWriteConnection, id: string) {
-  return db.select().from(threads).where(eq(threads.id, id)).get() ?? null;
+  return prepareCachedQuery(db, prepareGetThread).get({ id }) ?? null;
 }
 
 export interface ThreadMentionRow {
@@ -1391,36 +1400,22 @@ export interface ArchivedTeardownThreadRow {
 export function listArchivedThreadsPendingTeardown(
   db: DbQueryConnection,
 ): ArchivedTeardownThreadRow[] {
+  const selection = {
+    archivedAt: threads.archivedAt,
+    environmentId: threads.environmentId,
+    id: threads.id,
+    status: threads.status,
+  };
+  const archived = and(isNotNull(threads.archivedAt), isNull(threads.deletedAt));
   return db
-    .select({
-      archivedAt: threads.archivedAt,
-      environmentId: threads.environmentId,
-      id: threads.id,
-      status: threads.status,
-    })
+    .select(selection)
     .from(threads)
-    .where(
-      and(
-        isNotNull(threads.archivedAt),
-        isNull(threads.deletedAt),
-        or(
-          inArray(threads.status, [...ARCHIVED_TEARDOWN_THREAD_STATUSES]),
-          exists(
-            db
-              .select({ id: terminalSessions.id })
-              .from(terminalSessions)
-              .where(
-                and(
-                  eq(terminalSessions.threadId, threads.id),
-                  inArray(
-                    terminalSessions.status,
-                    NON_TERMINAL_SESSION_STATUSES,
-                  ),
-                ),
-              ),
-          ),
-        ),
-      ),
+    .where(and(archived, inArray(threads.status, [...ARCHIVED_TEARDOWN_THREAD_STATUSES])))
+    .union(
+      db
+        .select(selection)
+        .from(threads)
+        .where(and(archived, inArray(threads.id, db.select({ threadId: terminalSessions.threadId }).from(terminalSessions).where(inArray(terminalSessions.status, NON_TERMINAL_SESSION_STATUSES))))),
     )
     .all();
 }
@@ -1989,6 +1984,104 @@ export function deleteThread(
   return true;
 }
 
+export function listThreadAncestors(
+  db: DbQueryConnection,
+  threadIds: readonly string[],
+): Array<{ threadId: string; ancestorIds: string[] }> {
+  if (threadIds.length === 0) return [];
+  const rows = db.all<{ id: string; parentId: string | null }>(sql`
+    WITH RECURSIVE chain(id, parent_id) AS (
+      SELECT id, parent_thread_id FROM threads WHERE ${inArray(threads.id, [...threadIds])}
+      UNION
+      SELECT t.id, t.parent_thread_id FROM threads t JOIN chain c ON t.id = c.parent_id
+    )
+    SELECT id, parent_id AS parentId FROM chain
+  `);
+  const parentById = new Map(rows.map((row) => [row.id, row.parentId]));
+  const result: Array<{ threadId: string; ancestorIds: string[] }> = [];
+  for (const threadId of new Set(threadIds)) {
+    if (!parentById.has(threadId)) continue;
+    const ancestorIds: string[] = [];
+    let parentId = parentById.get(threadId) ?? null;
+    while (
+      parentId !== null &&
+      parentById.has(parentId) &&
+      parentId !== threadId &&
+      !ancestorIds.includes(parentId)
+    ) {
+      ancestorIds.push(parentId);
+      parentId = parentById.get(parentId) ?? null;
+    }
+    result.push({ threadId, ancestorIds });
+  }
+  return result;
+}
+
+export interface ListThreadDescendantsOptions {
+  includeArchived: boolean;
+  includeHidden: boolean;
+}
+
+export function listThreadDescendants(
+  db: DbQueryConnection,
+  threadIds: readonly string[],
+  options: ListThreadDescendantsOptions,
+): Array<{ threadId: string; descendantIds: string[] }> {
+  if (threadIds.length === 0) return [];
+  const rows = db.all<{
+    id: string;
+    parentId: string | null;
+    archived: number;
+    hidden: number;
+  }>(sql`
+    WITH RECURSIVE tree(id, parent_id, archived, hidden) AS (
+      SELECT id, parent_thread_id, archived_at IS NOT NULL, visibility = 'hidden' FROM threads
+      WHERE ${inArray(threads.id, [...threadIds])} AND deleted_at IS NULL
+      UNION
+      SELECT t.id, t.parent_thread_id, t.archived_at IS NOT NULL, t.visibility = 'hidden'
+      FROM threads t JOIN tree ON t.parent_thread_id = tree.id
+      WHERE t.deleted_at IS NULL
+    )
+    SELECT id, parent_id AS parentId, archived, hidden FROM tree
+  `);
+  const omittedIds = new Set(
+    rows
+      .filter(
+        (row) =>
+          (!options.includeArchived && row.archived === 1) ||
+          (!options.includeHidden && row.hidden === 1),
+      )
+      .map((row) => row.id),
+  );
+  const childIdsByParent = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.parentId === null) continue;
+    const siblings = childIdsByParent.get(row.parentId);
+    if (siblings === undefined) childIdsByParent.set(row.parentId, [row.id]);
+    else if (!siblings.includes(row.id)) siblings.push(row.id);
+  }
+  const knownIds = new Set(rows.map((row) => row.id));
+  const result: Array<{ threadId: string; descendantIds: string[] }> = [];
+  for (const threadId of new Set(threadIds)) {
+    if (!knownIds.has(threadId)) continue;
+    const visited = new Set([threadId]);
+    const descendantIds: string[] = [];
+    for (let index = -1; index < descendantIds.length; index += 1) {
+      const parentId = index < 0 ? threadId : descendantIds[index]!;
+      for (const childId of childIdsByParent.get(parentId) ?? []) {
+        if (visited.has(childId)) continue;
+        visited.add(childId);
+        descendantIds.push(childId);
+      }
+    }
+    result.push({
+      threadId,
+      descendantIds: descendantIds.filter((id) => !omittedIds.has(id)),
+    });
+  }
+  return result;
+}
+
 function lifecycleThreadTreeIds(seed: SQL): SQL {
   return sql`(WITH RECURSIVE owned(id) AS (
     ${seed} UNION SELECT t.id FROM threads t JOIN owned ON t.lifecycle_owner_thread_id = owned.id
@@ -2075,18 +2168,22 @@ export function archiveThread(
   id: string,
 ) {
   const now = Date.now();
-  const updated = db
-    .update(threads)
-    .set({ archivedAt: now, updatedAt: now })
-    .where(
-      and(
-        inArray(threads.id, lifecycleThreadTreeIdsForThread(id)),
-        isNull(threads.archivedAt),
-        isNull(threads.deletedAt),
-      ),
-    )
-    .returning()
-    .all();
+  const updated = db.transaction((tx) => {
+    const archived = tx
+      .update(threads)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(
+        and(
+          inArray(threads.id, lifecycleThreadTreeIdsForThread(id)),
+          isNull(threads.archivedAt),
+          isNull(threads.deletedAt),
+        ),
+      )
+      .returning()
+      .all();
+    markThreadPruningPolicyWork(tx, archived.map((thread) => thread.id), "rate-limits");
+    return archived;
+  });
   for (const thread of updated) {
     notifier.notifyThread(thread.id, ["archived-changed"], {
       projectId: thread.projectId,
@@ -2111,12 +2208,15 @@ export function unarchiveThread(
           return null;
       }
       const now = Date.now();
-      return tx
+      const unarchived = tx
         .update(threads)
         .set({ archivedAt: null, updatedAt: now })
         .where(and(eq(threads.id, id), isNotNull(threads.archivedAt)))
         .returning()
         .get();
+      if (unarchived)
+        markThreadPruningPolicyWork(tx, [unarchived.id], "rate-limits");
+      return unarchived;
     },
     { behavior: "immediate" },
   );

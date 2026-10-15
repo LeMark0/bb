@@ -1,3 +1,4 @@
+import { experimental_saveFile } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { attachmentDownloadUrl } from "../../shared/attachments.js";
 import type { Attachment } from "../../shared/contract.js";
@@ -7,7 +8,6 @@ import {
   formatRelativeTime,
   useNowTick,
 } from "../activity/time.js";
-import { ConfirmDialog } from "../../components/confirm-dialog.js";
 import { Button } from "@/components/ui/button";
 import { COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS } from "@/components/ui/coarse-pointer-sizing";
 import {
@@ -15,6 +15,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { ConfirmDeleteDialogContent } from "@/components/ui/confirm-delete-dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
@@ -211,6 +213,13 @@ function AttachmentRow({
           download={attachment.fileName}
           title={attachment.fileName}
           className={ROW_CONTROL_CLASS}
+          onClick={(event) => {
+            event.preventDefault();
+            void experimental_saveFile({
+              url: attachmentDownloadUrl(attachment.id),
+              fileName: attachment.fileName,
+            });
+          }}
         >
           {content}
         </a>
@@ -486,23 +495,32 @@ export function TaskAttachments({
       {lightbox ? (
         <Lightbox attachment={lightbox} onClose={closeLightbox} />
       ) : null}
-      <ConfirmDialog
+      <Dialog
         open={confirm !== null}
         onOpenChange={(next) => {
           if (!next) setConfirm(null);
         }}
-        title="Remove attachment?"
-        description={
-          confirm
-            ? `"${confirm.fileName}" will be permanently removed. Any references in the task description will be removed too. This cannot be undone.`
-            : ""
-        }
-        confirmLabel="Remove"
-        onConfirm={() => {
-          if (confirm) void performRemove(confirm);
-        }}
-        onAfterCloseAutoFocus={onConfirmClosed}
-      />
+      >
+        <DialogContent
+          className="max-w-sm"
+          onAfterCloseAutoFocus={onConfirmClosed}
+        >
+          {confirm ? (
+            <ConfirmDeleteDialogContent
+              title="Remove attachment?"
+              description={`"${confirm.fileName}" will be permanently removed. Any references in the task description will be removed too. This cannot be undone.`}
+              confirmLabel="Remove"
+              pending={false}
+              size="sm"
+              onCancel={() => setConfirm(null)}
+              onConfirm={() => {
+                setConfirm(null);
+                void performRemove(confirm);
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

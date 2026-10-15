@@ -2333,10 +2333,10 @@ export function registerTasksCli(
               description: "Model id as the provider spells it",
             },
             reasoning: {
-              type: "enum",
-              values: presetReasoningLevelSchema.options,
+              type: "string",
               required: true,
-              description: "Reasoning level the provider supports",
+              placeholder: "level",
+              description: "Reasoning level id the model lists",
             },
             permission: {
               type: "enum",
@@ -2442,9 +2442,9 @@ export function registerTasksCli(
               description: "Model id as the provider spells it",
             },
             reasoning: {
-              type: "enum",
-              values: presetReasoningLevelSchema.options,
-              description: "Reasoning level the provider supports",
+              type: "string",
+              placeholder: "level",
+              description: "Reasoning level id the model lists",
             },
             permission: {
               type: "enum",
