@@ -23,5 +23,48 @@ tier to Codex as given. When the model does not list it, Codex runs the turn
 at its default tier and the thread shows its warning that the tier "is not
 advertised as supported" and was omitted.
 
+## Per-thread context window
+
+The `contextWindowOverrides` setting gives selected threads a larger Codex
+context window. It is a JSON object keyed by bb thread id; each entry names the
+model it applies to:
+
+```sh
+bb plugin config provider-codex set contextWindowOverrides '{"thr_abc234defg":{"model":"gpt-6-astra","contextWindow":872000,"autoCompactTokenLimit":784800}}'
+```
+
+bb sends `contextWindow` as Codex `model_context_window` and
+`autoCompactTokenLimit` as `model_auto_compact_token_limit` when it starts or
+resumes that thread's session. An entry applies only while the thread runs the
+named model, so a model change falls back to the Codex defaults. Threads
+without an entry are unaffected, including children and reviewers in the same
+project or worktree, and forks or side chats, which get their own thread ids.
+Omit `autoCompactTokenLimit` to keep the Codex default compaction threshold; it
+must be below `contextWindow` when present.
+bb rejects malformed JSON, keys that are not bb thread ids, unknown fields and
+non-integer or non-positive token counts when the setting is saved.
+
+Choose the values from the model's entry in `codex debug models`. In the Codex
+0.162.1 catalogue, `gpt-6-astra` has a 272000-token `context_window`, a
+`max_context_window` of 872000, `effective_context_window_percent` 95 and no
+`auto_compact_token_limit`. Without an override, `bb thread context <id>`
+reports 258400 for it, which is 95% of 272000. The example requests the
+catalogue maximum as the raw window. If Codex applies the same 95% to an
+override, the reported window would be 828400; that is a calculation, not an
+observed result. The example's 784800 is 90% of the raw window, chosen to
+trigger compaction below that predicted 828400 with room for the next
+response. It is a deliberate margin, not a Codex default. This guide does not
+establish how Codex derives its own threshold when `autoCompactTokenLimit` is
+omitted, whether it clamps either value, or that requests near the raw window
+succeed; check `bb thread context <id>` after the next turn rather than
+treating the setting as proof.
+
+A change reaches a running thread at its next turn: bb rebuilds the Codex
+session on the same provider thread, keeping the conversation. Remove the
+entry, or run `bb plugin config provider-codex unset contextWindowOverrides`,
+to return to the defaults the same way. Before returning a thread to the
+default window, make sure its context is below the default reported window or
+compact it first.
+
 Use the core CLI skill for command syntax and official Codex guidance for
 upstream product behavior.
