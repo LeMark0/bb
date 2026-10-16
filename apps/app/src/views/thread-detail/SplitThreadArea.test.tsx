@@ -52,6 +52,7 @@ import { RouteNavigationProvider } from "@/components/ui/app-route-anchor";
 import { SplitThreadArea } from "./SplitThreadArea";
 import { applyThreadOpenToLayout } from "./splitThreadNavigation";
 import { makePluginRegistrationSet } from "@/test/fixtures/plugins";
+import { LocationProbe } from "@/test/location-probe";
 
 const threadStore = vi.hoisted(
   () =>
@@ -198,6 +199,8 @@ vi.mock("react-resizable-panels", async () => {
 
 vi.mock("@/components/ui/sidebar.js", () => ({
   useIsSidebarShowing: () => sidebarState.showing,
+  useSidebarKeepsCollapsedRail: () => false,
+  useIsSidebarFramed: () => false,
 }));
 
 vi.mock("@/views/RootComposeView", () => ({
@@ -639,11 +642,6 @@ function registerDocsPanel() {
       ],
     }),
   );
-}
-
-function LocationProbe() {
-  const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
 }
 
 function ExternalNav({ to }: { to: string }) {

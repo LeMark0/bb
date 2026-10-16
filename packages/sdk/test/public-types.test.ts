@@ -284,6 +284,7 @@ type ExpectedHostsKey =
   | "delete"
   | "experimental_deleteOldServerCopy"
   | "directory"
+  | "experimental_discoverRepos"
   | "get"
   | "installProviderCli"
   | "list"
@@ -382,6 +383,10 @@ type ExpectedSystemKey =
   | "config"
   | "executionOptions"
   | "installCliSkills"
+  | "experimental_cliCommand"
+  | "experimental_installCliCommand"
+  | "experimental_recordTelemetryEvent"
+  | "experimental_removeCliCommand"
   | "reloadConfig"
   | "setAiServiceSelection"
   | "testAiService"
@@ -401,6 +406,9 @@ type ExpectedThemeKey = "catalog" | "get" | "resolve" | "set";
 type ExpectedThreadSectionsKey = "create" | "delete" | "list" | "update";
 
 type ExpectedThreadsKey =
+  | "experimental_listAncestors"
+  | "experimental_listDescendants"
+  | "experimental_listPluginMetadata"
   | "getPluginMetadata"
   | "updatePluginMetadata"
   | "context"
@@ -467,6 +475,8 @@ type ExpectedThreadInteractionsKey =
 type ExpectedThreadQueuedMessagesKey =
   | "create"
   | "delete"
+  | "experimental_holdForEdit"
+  | "experimental_releaseEditHold"
   | "list"
   | "reorder"
   | "send"

@@ -41,6 +41,7 @@ function WorkInProgressPanel() {
     files: STORAGE_FILES,
     onSelectPath: setSelectedPath,
     selectedPath,
+    threadId: "thr_story",
   });
   return render({
     pullRequest: makePullRequest(),
@@ -59,6 +60,7 @@ function WorkInProgressPanel() {
         insertions: 0,
         deletions: 0,
         lineStatsComplete: true,
+        fileCount: 0,
         files: [],
       },
     }),
