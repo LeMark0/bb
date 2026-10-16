@@ -184,5 +184,9 @@
   "storage-retention": {
     "category": "tasks-and-workflows",
     "screenshots": []
+  },
+  "worker-progress": {
+    "category": "thread-management",
+    "screenshots": []
   }
 }
