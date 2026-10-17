@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ThreadTimelinePendingTodos } from "@bb/domain";
+import type {
+  ThreadTimelinePendingTodoItem,
+  ThreadTimelinePendingTodoItemStatus,
+  ThreadTimelinePendingTodos,
+} from "@bb/domain";
 import type { ThreadTimelineResponse } from "@bb/server-contract";
 import {
   createNodeBbSdk,
@@ -23,6 +27,16 @@ function captureLogLines(fn: () => void): { lines: string[] } {
   }
 }
 
+function todo(
+  id: string,
+  text: string,
+  status: ThreadTimelinePendingTodoItemStatus,
+  position: number,
+  after: number[] = [],
+): ThreadTimelinePendingTodoItem {
+  return { id, text, status, position, after };
+}
+
 describe("printPendingTodos", () => {
   it("prints nothing when pendingTodos is null", () => {
     const { lines } = captureLogLines(() => printPendingTodos(null));
@@ -33,6 +47,7 @@ describe("printPendingTodos", () => {
     const snapshot: ThreadTimelinePendingTodos = {
       sourceSeq: 1,
       updatedAt: 1,
+      order: "dependencies-not-provided",
       items: [],
     };
     const { lines } = captureLogLines(() => printPendingTodos(snapshot));
@@ -43,41 +58,69 @@ describe("printPendingTodos", () => {
     const snapshot: ThreadTimelinePendingTodos = {
       sourceSeq: 1,
       updatedAt: 1,
+      order: "dependencies-not-provided",
       items: [
-        { id: "a", text: "Investigate bug", status: "in_progress" },
-        { id: "b", text: "Write fix", status: "pending" },
-        { id: "c", text: "Add regression test", status: "pending" },
+        todo("a", "Investigate bug", "in_progress", 1),
+        todo("b", "Write fix", "pending", 2),
+        todo("c", "Add regression test", "pending", 3),
       ],
     };
     const { lines } = captureLogLines(() => printPendingTodos(snapshot));
     expect(lines).toEqual([
       "",
       "TODOs (3):",
+      "  Agent's order. Dependencies not provided.",
       "  [>] Investigate bug",
       "  [ ] Write fix",
       "  [ ] Add regression test",
     ]);
   });
 
-  it("renders fraction heading and orders in-progress before pending before completed", () => {
+  it("keeps the agent's order when statuses differ and says dependencies were not provided", () => {
     const snapshot: ThreadTimelinePendingTodos = {
       sourceSeq: 1,
       updatedAt: 1,
+      order: "dependencies-not-provided",
       items: [
-        { id: "a", text: "First done", status: "completed" },
-        { id: "b", text: "Active work", status: "in_progress" },
-        { id: "c", text: "Queued work", status: "pending" },
-        { id: "d", text: "Second done", status: "completed" },
+        todo("a", "First done", "completed", 1),
+        todo("b", "Active work", "in_progress", 2),
+        todo("c", "Queued work", "pending", 3),
+        todo("d", "Second done", "completed", 4),
       ],
     };
     const { lines } = captureLogLines(() => printPendingTodos(snapshot));
     expect(lines).toEqual([
       "",
       "TODOs (2/4 done):",
+      "  Agent's order. Dependencies not provided.",
+      "  [x] First done",
       "  [>] Active work",
       "  [ ] Queued work",
-      "  [x] First done",
       "  [x] Second done",
+    ]);
+  });
+
+  it("numbers dependency-ordered steps and names their prerequisites", () => {
+    const snapshot: ThreadTimelinePendingTodos = {
+      sourceSeq: 1,
+      updatedAt: 1,
+      order: "dependencies",
+      items: [
+        todo("id:1", "Read the contract", "completed", 1),
+        todo("id:2", "Update the fold", "in_progress", 2, [1]),
+        todo("id:3", "Update the card", "pending", 3, [1]),
+        todo("id:4", "Verify both", "failed", 4, [2, 3]),
+      ],
+    };
+    const { lines } = captureLogLines(() => printPendingTodos(snapshot));
+    expect(lines).toEqual([
+      "",
+      "TODOs (1/4 done):",
+      "  Ordered by dependencies.",
+      "  [x] 1. Read the contract",
+      "  [>] 2. Update the fold (after 1)",
+      "  [ ] 3. Update the card (after 1)",
+      "  [!] 4. Verify both (after 2, 3)",
     ]);
   });
 
@@ -85,15 +128,17 @@ describe("printPendingTodos", () => {
     const snapshot: ThreadTimelinePendingTodos = {
       sourceSeq: 1,
       updatedAt: 1,
+      order: "dependencies-invalid",
       items: [
-        { id: "a", text: "Read planning doc", status: "completed" },
-        { id: "b", text: "Build banner", status: "completed" },
+        todo("a", "Read planning doc", "completed", 1),
+        todo("b", "Build banner", "completed", 2),
       ],
     };
     const { lines } = captureLogLines(() => printPendingTodos(snapshot));
     expect(lines).toEqual([
       "",
       "TODOs (2/2 done):",
+      "  Agent's order. Dependencies couldn't be read.",
       "  [x] Read planning doc",
       "  [x] Build banner",
     ]);
@@ -151,7 +196,8 @@ describe("fetchThreadPendingTodos", () => {
     const snapshot: ThreadTimelinePendingTodos = {
       sourceSeq: 7,
       updatedAt: 7,
-      items: [{ id: "a", text: "Work", status: "in_progress" }],
+      order: "dependencies-not-provided",
+      items: [todo("a", "Work", "in_progress", 1)],
     };
     const { requestUrls, sdk } = makeSdkOverHttpBoundary(async () =>
       Response.json(makeTimelineResponse(snapshot)),

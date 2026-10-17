@@ -3447,6 +3447,54 @@ describe("host-daemon session schemas", () => {
     });
   });
 
+  it("accepts plan steps with, without and with unreadable dependency fields without a protocol bump", () => {
+    const planBatch = (steps: unknown[]) =>
+      hostDaemonEventBatchRequestSchema.parse({
+        sessionId: "session_123",
+        eventGroups: [
+          {
+            threadId: "thr_123",
+            events: [
+              {
+                type: "item/completed",
+                threadId: "thr_123",
+                providerThreadId: "provider-thread-123",
+                scope: turnScope("turn_123"),
+                item: {
+                  type: "planSteps",
+                  id: "plan_1",
+                  steps,
+                  status: "completed",
+                },
+              },
+            ],
+          },
+        ],
+      }).eventGroups[0]?.events[0];
+    const stepsOf = (event: ReturnType<typeof planBatch>) =>
+      event?.type === "item/completed" && event.item.type === "planSteps"
+        ? event.item.steps
+        : null;
+
+    expect(
+      stepsOf(planBatch([{ step: "Read", status: "completed" }])),
+    ).toStrictEqual([{ step: "Read", status: "completed" }]);
+    expect(
+      stepsOf(
+        planBatch([
+          { step: "Read", status: "completed", id: "1", needs: [] },
+          { step: "Write", id: "2", needs: ["1"] },
+        ]),
+      ),
+    ).toEqual([
+      { step: "Read", status: "completed", id: "1", needs: [] },
+      { step: "Write", id: "2", needs: ["1"] },
+    ]);
+    expect(stepsOf(planBatch([{ step: "Write", id: 2, needs: "1" }]))).toEqual([
+      { step: "Write" },
+    ]);
+  });
+
   it("restricts daemon websocket control and RPC messages", () => {
     expect(
       hostDaemonServerWsMessageSchema.safeParse({

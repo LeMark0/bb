@@ -237,6 +237,104 @@ describe("presentation-driven timeline rows", () => {
       items.map((item) => item.getAttribute("data-plan-step-status")),
     ).toEqual(["completed", "active", "pending"]);
     expect(list.textContent).toContain("Wire the renderer");
+    expect(
+      screen.getByText("Agent's order. Dependencies not provided."),
+    ).toBeTruthy();
+  });
+
+  it("orders a plan-steps row by its dependencies whatever the step statuses are", () => {
+    const steps = (
+      statuses: ("pending" | "active" | "completed" | "failed")[],
+    ) =>
+      [
+        { id: "verify", step: "Verify both", needs: ["fold", "card"] },
+        { id: "card", step: "Update the card", needs: ["contract"] },
+        { id: "contract", step: "Read the contract", needs: [] },
+        { id: "fold", step: "Update the fold", needs: ["contract"] },
+      ].map((step, index) => ({ ...step, status: statuses[index] }));
+    const sentences = () =>
+      within(screen.getByTestId("plan-steps-body"))
+        .getAllByRole("listitem")
+        .map((item) => within(item).getByText(/: /).textContent);
+    const renderPlan = (row: ReturnType<typeof planStepsRow>) =>
+      renderRows(
+        <ThreadTimelineRows
+          threadId="thr_main"
+          threadRuntimeDisplayStatus="idle"
+          workspaceRootPath={undefined}
+          timelineRows={[row]}
+          initialExpanded={new Set([row.id])}
+        />,
+      );
+
+    renderPlan(
+      planStepsRow({
+        steps: steps(["pending", "pending", "active", "pending"]),
+      }),
+    );
+    const beforeProgress = sentences();
+    cleanup();
+    renderPlan(
+      planStepsRow({
+        steps: steps(["pending", "active", "completed", "failed"]),
+      }),
+    );
+
+    expect(beforeProgress).toEqual([
+      "Step 1 of 4, in progress: Read the contract",
+      "Step 2 of 4, pending, after step 1: Update the card",
+      "Step 3 of 4, pending, after step 1: Update the fold",
+      "Step 4 of 4, pending, after steps 2 and 3: Verify both",
+    ]);
+    expect(sentences()).toEqual([
+      "Step 1 of 4, completed: Read the contract",
+      "Step 2 of 4, in progress, after step 1: Update the card",
+      "Step 3 of 4, failed, after step 1: Update the fold",
+      "Step 4 of 4, pending, after steps 2 and 3: Verify both",
+    ]);
+    expect(screen.getByText("after 2, 3")).toBeTruthy();
+    expect(screen.getByText("Ordered by dependencies.")).toBeTruthy();
+  });
+
+  it("re-renders a plan-steps row when only its dependencies change", () => {
+    const client = new QueryClient();
+    const provider = { providerId: "echo-agent", pluginId: "echo-provider" };
+    const tree = (needsOfA: string[]) => {
+      const row = planStepsRow({
+        steps: [
+          { id: "a", step: "Step A", status: "pending", needs: needsOfA },
+          { id: "b", step: "Step B", status: "pending", needs: [] },
+          { id: "c", step: "Step C", status: "pending", needs: [] },
+        ],
+      });
+      return (
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <ThreadProviderContext.Provider value={provider}>
+              <ThreadTimelineRows
+                threadId="thr_main"
+                threadRuntimeDisplayStatus="idle"
+                workspaceRootPath={undefined}
+                timelineRows={[row]}
+                initialExpanded={new Set([row.id])}
+              />
+            </ThreadProviderContext.Provider>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+    };
+    const stepTexts = () =>
+      within(screen.getByTestId("plan-steps-body"))
+        .getAllByRole("listitem")
+        .map(
+          (item) => within(item).getByText(/: /).textContent?.split(": ")[1],
+        );
+
+    const view = render(tree([]));
+    expect(stepTexts()).toEqual(["Step A", "Step B", "Step C"]);
+
+    view.rerender(tree(["c"]));
+    expect(stepTexts()).toEqual(["Step B", "Step C", "Step A"]);
   });
 });
 

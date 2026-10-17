@@ -218,7 +218,9 @@ The current grammar (`grammarVersions: [3, 3]`) includes:
   and `transparentBackground`), `delegation` (`childRef`, `label`,
   `background`, `summary?`; one shape for codex `spawnAgent`/`wait`, the
   Claude `Agent` tool, and backgrounded agents), and `planSteps` (a
-  structured plan snapshot as an item).
+  structured plan snapshot as an item; a step may carry an `id` and `needs`,
+  the ids of the steps it waits for, as described in
+  [provider-plugin-api.md](provider-plugin-api.md) §3).
 - **`presentation`** on `item.open` and `item.close`, the one place it
   travels (shape and glyph rules in
   [provider-plugin-api.md](provider-plugin-api.md) §3; `detail` ≤ 280

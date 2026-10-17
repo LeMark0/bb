@@ -135,9 +135,15 @@ const threadEventPlanStepStatusSchema = z.enum([
   "failed",
 ]);
 
+function absentWhenMalformed<T extends z.ZodType>(schema: T) {
+  return schema.optional().catch(undefined).optional();
+}
+
 export const threadEventPlanStepSchema = z.object({
   step: z.string(),
   status: threadEventPlanStepStatusSchema.optional(),
+  id: absentWhenMalformed(z.string()),
+  needs: absentWhenMalformed(z.array(z.string())),
 });
 export type ThreadEventPlanStep = z.infer<typeof threadEventPlanStepSchema>;
 
