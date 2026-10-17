@@ -350,6 +350,13 @@ presentation: {
 }
 ```
 
+A `command` item's row shows its command line unless the provider knows why
+the command runs. To title the row by that intent, set `title` to it and
+`detail` to the command; the row then reads like other presented tools, its
+body still shows the full command, and approval and denial rows keep showing
+the command. A `title` without `detail` is treated as a reformatted command
+line and leaves the row's command title unchanged.
+
 `icon.glyph` is a name, never bytes or a path: a host glyph (`"FileText"`)
 or one of the plugin's own declared icons by its namespaced glyph
 (`"<pluginId>/<name>"`, an entry of the manifest's

@@ -84,6 +84,7 @@ were excluded. See the [audit](../MAINTENANCE.md) and
 | [Tasks, boards, and delegation](plugin-tasks.md) | 13 | 11 passed, 2 partial/blocked |
 | [Theme preview workbench](plugin-theme-preview.md) | 4 | 3 passed, 1 failed |
 | [Durable workflows](plugin-workflows.md) | 8 | 6 passed, 2 partial/blocked |
+| [Worker progress card](plugin-worker-progress.md) | 7 | 7 not run |
 
 ## Platform and support surfaces
 

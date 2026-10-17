@@ -193,5 +193,10 @@
     "id": "thread-list",
     "name": "Thread list",
     "icon": "ListView"
+  },
+  {
+    "id": "bb--worker-progress",
+    "name": "Workers",
+    "icon": "UserRound"
   }
 ]
