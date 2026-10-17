@@ -14,21 +14,26 @@ env:
 
 jobs:
   windows-diagnostic:
-    name: Windows process identity and fixture cleanup evidence
+    name: Windows strict and loose Turbo identity comparison
     if: ${{ github.repository == 'LeMark0/bb' }}
     runs-on: windows-2025
     timeout-minutes: 20
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
     env:
       TURBO_TELEMETRY_DISABLED: "1"
       DO_NOT_TRACK: "1"
+      RELEASE_COMMIT: 5a8f444b5e119ddfa0d02b4ae72f0fe910b93e56
 
     steps:
-      - name: Checkout repository
+      - name: Check out the exact release source
         timeout-minutes: 1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 5a8f444b5e119ddfa0d02b4ae72f0fe910b93e56
           persist-credentials: false
 
       - name: Setup Node.js
@@ -45,78 +50,104 @@ jobs:
           TMP: ${{ runner.temp }}
         run: npm install --global pnpm@${{ env.PNPM_VERSION }} --ignore-scripts
 
-      - name: Mirror control for the fake gh executable
+      - name: Verify the release source identity
         timeout-minutes: 1
-        shell: bash
         env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
-        run: node scripts/diagnostics/cr35-windows/gh-unlink-probe.mjs "$CR35_EVIDENCE_DIR" 2
+          AB_EVIDENCE_DIR: ${{ runner.temp }}/cr35-ab-evidence
+        run: |
+          mkdir -p "$AB_EVIDENCE_DIR"
+          cat > "$AB_EVIDENCE_DIR/expected-blobs.txt" <<'EOF'
+          ad88c82284e96080a03608bcc770e234d0e7174c packages/config/test/verified-process-stop.test.ts
+          250f2bc180d0b13fb69c256f0d02e9e5cb4dfdb6 packages/process-utils/src/process-info.ts
+          c0e46ea2e99d9b97d14c8119e048910daa6fcf3b packages/config/src/verified-process-stop.ts
+          9688014f0286e6e82318026c14ffaeb2ad72cd4a packages/config/vitest.config.ts
+          1a17fdf94c46c8d1ba808448ee671ddce8efdb44 packages/config/package.json
+          52f92263042b00e486bb1259bdfeed9dcf4741c5 turbo.json
+          b8893c170354db69058799370f48add089da46e9 pnpm-lock.yaml
+          EOF
+          {
+            echo "commit $(git rev-parse HEAD)"
+            while read -r blob path; do
+              echo "$(git hash-object "$path") $(sha256sum "$path" | cut -d' ' -f1) $path"
+            done < "$AB_EVIDENCE_DIR/expected-blobs.txt"
+            echo "tracked-changes $(git status --porcelain --untracked-files=no | wc -l)"
+          } > "$AB_EVIDENCE_DIR/source-before.txt"
+          cat "$AB_EVIDENCE_DIR/source-before.txt"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          while read -r blob path; do
+            test "$(git hash-object "$path")" = "$blob"
+          done < "$AB_EVIDENCE_DIR/expected-blobs.txt"
+          test -z "$(git status --porcelain --untracked-files=no)"
 
-      - name: Install dependencies
+      - name: Install foundation dependencies
         id: install
-        if: ${{ !cancelled() }}
         timeout-minutes: 5
-        shell: bash
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter '@bb/app' --filter '@bb/db...' --filter '@bb/config...' --filter 'bb-plugin-github...'
+        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter "@bb/process-utils..." --filter "@bb/host-workspace..." --filter "@bb/host-watcher..." --filter "@bb/agent-runtime..." --filter "@bb/provider-bridge-protocol..." --filter "@bb/provider-bridge-acp..." --filter "@bb/host-daemon-contract..." --filter "@bb/config..." --filter "@bb/db..." --filter "bb-plugin-provider-acp..." --filter "bb-plugin-provider-codex..." --filter "bb-plugin-provider-claude-code..." --filter "bb-plugin-echo-provider..." --filter "@bb/app..."
 
-      - name: Verified process stop test with same-child identity evidence
+      - name: Compare strict and loose Turbo runs of the release test
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        timeout-minutes: 4
-        shell: bash
+        timeout-minutes: 8
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
+          AB_EVIDENCE_DIR: ${{ runner.temp }}/cr35-ab-evidence
         run: |
-          set -o pipefail
-          mkdir -p "$CR35_EVIDENCE_DIR"
-          pnpm exec turbo run test --filter=@bb/config --env-mode=loose --output-logs=full -- test/verified-process-stop.test.ts 2>&1 | tee "$CR35_EVIDENCE_DIR/verified-process-stop.log"
-
-      - name: GitHub RPC tests with fixture cleanup evidence
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        timeout-minutes: 4
-        shell: bash
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
-        run: |
-          mkdir -p "$CR35_EVIDENCE_DIR"
+          mkdir -p "$AB_EVIDENCE_DIR"
+          {
+            echo "node $(node --version)"
+            echo "pnpm $(pnpm --version)"
+            echo "turbo $(pnpm exec turbo --version)"
+          } > "$AB_EVIDENCE_DIR/versions.txt"
+          for name in SystemRoot SYSTEMROOT windir WINDIR PSModulePath LOCALAPPDATA APPDATA USERPROFILE ProgramData ALLUSERSPROFILE PROCESSOR_ARCHITECTURE NUMBER_OF_PROCESSORS COMPUTERNAME USERNAME TEMP TMP; do
+            if [ -n "${!name+set}" ]; then echo "$name present"; else echo "$name absent"; fi
+          done > "$AB_EVIDENCE_DIR/parent-env-presence.txt"
+          summary="$AB_EVIDENCE_DIR/phases.tsv"
+          printf 'phase\tmode\tstarted_utc\tfinished_utc\tduration_ms\texit_code\tlog\n' > "$summary"
           failures=0
-          skipped=0
-          for run in 1 2 3; do
-            if [ "$run" -gt 1 ] && [ "$SECONDS" -ge 150 ]; then
-              echo "run $run skipped by the step deadline"
-              skipped=$((skipped + 1))
-              continue
-            fi
-            if [ "$run" -eq 1 ]; then
-              command=(pnpm exec turbo run test --filter=bb-plugin-github --env-mode=loose --output-logs=full -- server.rpc.test.ts)
+          for spec in A1:strict B:loose A2:strict; do
+            phase="${spec%%:*}"
+            mode="${spec##*:}"
+            log="$AB_EVIDENCE_DIR/phase-$phase-$mode.log"
+            echo "\$ pnpm exec turbo run test --filter=@bb/config --env-mode=$mode --force --output-logs=full -- test/verified-process-stop.test.ts" > "$log"
+            started_utc=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+            started_ms=$(date +%s%3N)
+            if pnpm exec turbo run test --filter=@bb/config --env-mode="$mode" --force --output-logs=full -- test/verified-process-stop.test.ts >> "$log" 2>&1; then
+              code=0
             else
-              command=(pnpm --filter bb-plugin-github exec vitest run --config vitest.config.ts server.rpc.test.ts)
+              code=$?
             fi
-            if CR35_RUN="$run" "${command[@]}" > "$CR35_EVIDENCE_DIR/github-rpc-run-$run.log" 2>&1; then
-              echo "run $run passed after ${SECONDS}s"
-            else
-              echo "run $run failed after ${SECONDS}s"
-              failures=$((failures + 1))
-            fi
+            finished_ms=$(date +%s%3N)
+            finished_utc=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$phase" "$mode" "$started_utc" "$finished_utc" "$((finished_ms - started_ms))" "$code" "$(basename "$log")" >> "$summary"
+            if [ "$code" -ne 0 ]; then failures=$((failures + 1)); fi
+            echo "== $phase ($mode) exit $code after $((finished_ms - started_ms)) ms"
+            grep -E "identity read|Test Files|Tests  |cache bypass|force executing|Tasks:" "$log" || true
           done
-          grep -h -E "EBUSY|EPERM|EACCES|Test Files|Tests  " "$CR35_EVIDENCE_DIR"/github-rpc-run-*.log || true
-          echo "failures=$failures skipped=$skipped" | tee "$CR35_EVIDENCE_DIR/github-rpc-summary.txt"
-          test "$failures" -eq 0 && test "$skipped" -eq 0
+          {
+            echo "commit $(git rev-parse HEAD)"
+            while read -r blob path; do
+              echo "$(git hash-object "$path") $(sha256sum "$path" | cut -d' ' -f1) $path"
+            done < "$AB_EVIDENCE_DIR/expected-blobs.txt"
+            echo "tracked-changes $(git status --porcelain --untracked-files=no | wc -l)"
+          } > "$AB_EVIDENCE_DIR/source-after.txt"
+          cat "$summary"
+          if cmp -s "$AB_EVIDENCE_DIR/source-before.txt" "$AB_EVIDENCE_DIR/source-after.txt"; then
+            echo "source unchanged" | tee "$AB_EVIDENCE_DIR/source-comparison.txt"
+          else
+            echo "source CHANGED during the experiment" | tee "$AB_EVIDENCE_DIR/source-comparison.txt"
+            failures=$((failures + 1))
+          fi
+          test "$failures" -eq 0
 
       - name: Upload diagnostic evidence
         if: ${{ !cancelled() }}
         timeout-minutes: 1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: cr35-windows-diagnostic-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cr35-evidence
+          name: cr35-windows-ab-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cr35-ab-evidence
           retention-days: 7
           if-no-files-found: error
