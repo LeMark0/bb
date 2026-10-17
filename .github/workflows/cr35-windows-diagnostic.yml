@@ -62,7 +62,7 @@ jobs:
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter '@bb/db...' --filter '@bb/config...' --filter 'bb-plugin-github...'
+        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter '@bb/app' --filter '@bb/db...' --filter '@bb/config...' --filter 'bb-plugin-github...'
 
       - name: Verified process stop test with same-child identity evidence
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
