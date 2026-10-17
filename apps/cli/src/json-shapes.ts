@@ -1,10 +1,10 @@
 export const JSON_SHAPE_BY_COMMAND_PATH: Readonly<Record<string, string>> = {
   status:
-    "{project: {id, name} | null, thread: {id, status, title, parentThreadId, environment: {hostId, display} | null} | null, childThreads: [{id, status, title}] | null, pendingTodos, pluginsNeedingAttention: [{id, status}], dataDir}",
+    "{project: {id, name} | null, thread: {id, status, title, parentThreadId, environment: {hostId, display} | null} | null, childThreads: [{id, status, title}] | null, pendingTodos: {order, items: [{text, status, position, after}]} | null, pluginsNeedingAttention: [{id, status}], dataDir}",
   "thread list":
     "[{id, projectId, environmentId, providerId, title, status, parentThreadId, sectionId, visibility, archivedAt, pinnedAt, createdAt, updatedAt, activity}]    (bare array; title can be null)",
   "thread show":
-    "{thread: {id, status, title, projectId, environmentId, parentThreadId, ...}, environment: {id, hostId, path, branchName, ...} | null, pendingTodos}    (thread fields are under .thread)",
+    "{thread: {id, status, title, projectId, environmentId, parentThreadId, ...}, environment: {id, hostId, path, branchName, ...} | null, pendingTodos: {order, items: [{text, status, position, after}]} | null}    (thread fields are under .thread; pendingTodos items are in plan order, and after lists prerequisite positions when order is dependencies)",
   "thread log":
     "[{id, seq, type, createdAt, threadId, scope, data}]    (bare array of raw events, oldest first; page with --after-seq <seq>); with --message: {message, before, after} of conversation rows",
   "thread output": "{output}",

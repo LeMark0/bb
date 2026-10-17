@@ -16,6 +16,7 @@ Start a thread, pick Codex, and let it write and review code in your repository 
 
 - `Codex memory`: let Codex recall and create memories from bb threads.
 - `Disable provider subagents`: stop native subagents so the agent delegates through bb.
+- `Per-thread context windows`: give selected threads a larger Codex context window and compaction threshold for a named model.
 
 ## Requirements
 

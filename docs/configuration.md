@@ -230,9 +230,9 @@ preserve the saved value. For older SDK callers, the general-settings API still
 accepts and returns `showUnhandledProviderEvents` as a deprecated alias of
 `showDiagnosticEvents`, and an existing value is preserved; when a
 read-modify-write payload contains conflicting values, the one changed from the
-saved setting wins. Codex memory and native subagents live on the Codex
-provider plugin; Claude Code's options are under
-[Claude Code provider](#claude-code-provider).
+saved setting wins. Codex memory, native subagents and per-thread context
+windows live on the [Codex provider](#codex-provider) plugin; Claude Code's
+options are under [Claude Code provider](#claude-code-provider).
 
 **Composer keys.** The prompt box uses plain-text editing; Markdown delimiters
 stay visible. Outside an open typeahead menu, Shift+Enter inserts a newline. On
@@ -831,6 +831,21 @@ bundled skills), and `bbCli`, `pluginAuthoring`, `skillCreator`, and
 `submitPlugin` (individual skills). They apply the next time agent
 configuration is assembled. Disabling the plugin removes its introduction and
 skills.
+
+### Codex provider
+
+The **Per-thread context windows** setting (`contextWindowOverrides`) is empty
+by default, so every thread uses the Codex model defaults. Set it to a JSON
+object keyed by bb thread id, with
+`bb plugin config provider-codex set contextWindowOverrides '{"thr_abc234defg":{"model":"gpt-6-astra","contextWindow":872000,"autoCompactTokenLimit":784800}}'`.
+An entry applies only while that thread runs the named model. bb passes it to
+Codex as `model_context_window` and the optional
+`model_auto_compact_token_limit`, and rebuilds the thread's Codex session on
+the same provider thread before its next turn. Threads without an entry are
+unchanged. The example requests the catalogue's maximum raw window for
+`gpt-6-astra` and sets compaction at 90% of it; the Codex provider skill
+explains those values and what remains unverified about Codex's effective
+window and clamping.
 
 ### Claude Code provider
 

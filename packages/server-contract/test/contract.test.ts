@@ -304,10 +304,16 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "A plan step carries a status only once the provider reports progress on it; absence means the step is listed but not yet started, which is not the same as pending.",
+      "A plan step carries a status only once the provider reports progress on it; absence means the step is listed but not yet started, which is not the same as pending. It carries an id and prerequisites only when the provider reports them: absent prerequisites mean the provider sent no dependency data, which is not the same as an empty list of prerequisites.",
     fields: [
+      "threadTimelineResponseSchema.delta.upsertRows.steps.id",
+      "threadTimelineResponseSchema.delta.upsertRows.steps.needs",
       "threadTimelineResponseSchema.delta.upsertRows.steps.status",
+      "threadTimelineResponseSchema.rows.steps.id",
+      "threadTimelineResponseSchema.rows.steps.needs",
       "threadTimelineResponseSchema.rows.steps.status",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.id",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.needs",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.status",
     ],
   },

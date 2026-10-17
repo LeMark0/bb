@@ -26,6 +26,8 @@ export type CodexSessionOptions = {
   reasoningLevel?: ReasoningLevel;
   memoryEnabled?: boolean;
   providerSubagentsEnabled?: boolean;
+  modelContextWindow?: number;
+  modelAutoCompactTokenLimit?: number;
   instructions?: string;
   envVars?: Record<string, string>;
 } & RuntimePermissionPolicy;
@@ -616,6 +618,13 @@ export function buildCodexConfig(
   if (args.options?.providerSubagentsEnabled === false) {
     config["features.multi_agent"] = false;
     config["features.multi_agent_v2.max_concurrent_threads_per_session"] = 1;
+  }
+  if (args.options?.modelContextWindow !== undefined) {
+    config["model_context_window"] = args.options.modelContextWindow;
+  }
+  if (args.options?.modelAutoCompactTokenLimit !== undefined) {
+    config["model_auto_compact_token_limit"] =
+      args.options.modelAutoCompactTokenLimit;
   }
   config["memories.use_memories"] = args.options?.memoryEnabled ?? true;
   config["memories.generate_memories"] = args.options?.memoryEnabled ?? true;

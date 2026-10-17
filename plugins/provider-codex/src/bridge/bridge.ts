@@ -541,6 +541,8 @@ const codexProviderOptionsSchema = z
   .object({
     memoryEnabled: z.boolean().optional(),
     providerSubagentsEnabled: z.boolean().optional(),
+    modelContextWindow: z.number().int().positive().optional(),
+    modelAutoCompactTokenLimit: z.number().int().positive().optional(),
     additionalWorkspaceWriteRoots: z.array(z.string()).optional(),
   })
   .passthrough();
@@ -566,6 +568,12 @@ function decodeCodexOptions(
       ...(decoded.providerSubagentsEnabled !== undefined
         ? { providerSubagentsEnabled: decoded.providerSubagentsEnabled }
         : {}),
+      ...(decoded.modelContextWindow !== undefined
+        ? { modelContextWindow: decoded.modelContextWindow }
+        : {}),
+      ...(decoded.modelAutoCompactTokenLimit !== undefined
+        ? { modelAutoCompactTokenLimit: decoded.modelAutoCompactTokenLimit }
+        : {}),
     },
     additionalWorkspaceWriteRoots: decoded.additionalWorkspaceWriteRoots ?? [],
     daybreak: requestedDaybreak(options),
@@ -588,6 +596,9 @@ function constructionSignature(
     reasoningLevel: sessionOptions.reasoningLevel ?? null,
     memoryEnabled: sessionOptions.memoryEnabled ?? null,
     providerSubagentsEnabled: sessionOptions.providerSubagentsEnabled ?? null,
+    modelContextWindow: sessionOptions.modelContextWindow ?? null,
+    modelAutoCompactTokenLimit:
+      sessionOptions.modelAutoCompactTokenLimit ?? null,
     poolRoute:
       poolBaseUrl === undefined || poolToken === undefined
         ? null

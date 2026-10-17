@@ -4,6 +4,10 @@ import { registerUsageSource } from "./src/usage-source.js";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { codexExtensionKinds } from "./src/extension-kinds.js";
 import { CODEX_NATIVE_ROOTS_DECLARATION } from "./src/native-roots.js";
+import {
+  contextWindowOverridesSettingSchema,
+  contextWindowProviderOptions,
+} from "./src/context-window-overrides.js";
 
 export default function plugin(bb: BbPluginApi) {
   registerUsageSource(bb);
@@ -24,6 +28,15 @@ export default function plugin(bb: BbPluginApi) {
       description:
         "Prevent Codex from starting native subagents so agents use bb for delegation.",
       default: false,
+    },
+    contextWindowOverrides: {
+      type: "string",
+      label: "Per-thread context windows",
+      description:
+        "A JSON object keyed by bb thread id whose entries set model, contextWindow and an optional autoCompactTokenLimit. An entry applies only while that thread runs that model; every other thread keeps the Codex defaults.",
+      experimental_multiline: true,
+      experimental_schema: contextWindowOverridesSettingSchema,
+      default: "",
     },
   });
 
@@ -81,6 +94,11 @@ export default function plugin(bb: BbPluginApi) {
       return {
         memoryEnabled: context.settings.memoryEnabled !== false,
         providerSubagentsEnabled: context.settings.subagentsDisabled !== true,
+        ...contextWindowProviderOptions({
+          settingValue: context.settings.contextWindowOverrides,
+          threadId: context.threadId,
+          model: context.model,
+        }),
       };
     },
     extensionKinds: codexExtensionKinds,

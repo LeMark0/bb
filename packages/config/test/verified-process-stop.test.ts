@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readProcessIdentity } from "@bb/process-utils";
 import { expect, it, onTestFinished } from "vitest";
 import {
   isProcessRunning,
@@ -25,6 +26,11 @@ it("verifies a real process's command and start time before stopping it", async 
   });
   await once(child.stdout, "data");
   if (child.pid === undefined) throw new Error("Child did not start");
+  const readStartedAt = Date.now();
+  const identity = await readProcessIdentity(child.pid);
+  const readReport = `identity read for pid ${child.pid} returned ${JSON.stringify(identity)} after ${Date.now() - readStartedAt}ms`;
+  expect(identity?.command ?? "", readReport).toContain(token);
+  expect(identity?.startedAt ?? null, readReport).not.toBeNull();
   const args = {
     pid: child.pid,
     startedAt,

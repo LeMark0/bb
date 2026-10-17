@@ -78,14 +78,87 @@ describe("extractThreadTimelinePendingTodos", () => {
     expect(result).toEqual({
       sourceSeq: 2,
       updatedAt: 2,
+      order: "dependencies-not-provided",
       items: [
-        { id: "seq:2:0", text: "Read the spec", status: "completed" },
-        { id: "seq:2:1", text: "Writing the code", status: "in_progress" },
-        { id: "seq:2:2", text: "Run the tests", status: "pending" },
-        { id: "seq:2:3", text: "Flaky step", status: "completed" },
-        { id: "seq:2:5", text: "No status", status: "pending" },
+        {
+          id: "step:0:Read the spec",
+          text: "Read the spec",
+          status: "completed",
+          position: 1,
+          after: [],
+        },
+        {
+          id: "step:0:Writing the code",
+          text: "Writing the code",
+          status: "in_progress",
+          position: 2,
+          after: [],
+        },
+        {
+          id: "step:0:Run the tests",
+          text: "Run the tests",
+          status: "pending",
+          position: 3,
+          after: [],
+        },
+        {
+          id: "step:0:Flaky step",
+          text: "Flaky step",
+          status: "failed",
+          position: 4,
+          after: [],
+        },
+        {
+          id: "step:0:No status",
+          text: "No status",
+          status: "pending",
+          position: 5,
+          after: [],
+        },
       ],
     });
+  });
+
+  it("orders the banner by dependencies and keeps row identity when statuses change", () => {
+    const steps = (statuses: ThreadEventPlanStep["status"][]) =>
+      [
+        { id: "verify", step: "Verify", needs: ["fold", "card"] },
+        { id: "card", step: "Update the card", needs: ["contract"] },
+        { id: "contract", step: "Read the contract", needs: [] },
+        { id: "fold", step: "Update the fold", needs: ["contract"] },
+      ].map((step, index) => ({ ...step, status: statuses[index] }));
+    const before = extractThreadTimelinePendingTodos(ACTIVE, [
+      planStepsEvent({
+        seq: 1,
+        steps: steps(["pending", "pending", "active", "pending"]),
+      }),
+    ]);
+    const after = extractThreadTimelinePendingTodos(ACTIVE, [
+      planStepsEvent({
+        seq: 2,
+        steps: steps(["pending", "active", "completed", "failed"]),
+      }),
+    ]);
+    const layout = (todos: typeof before) =>
+      todos?.items.map(({ id, position, after: prerequisites }) => ({
+        id,
+        position,
+        after: prerequisites,
+      }));
+    expect(before?.order).toBe("dependencies");
+    expect(layout(before)).toEqual([
+      { id: "id:contract", position: 1, after: [] },
+      { id: "id:card", position: 2, after: [1] },
+      { id: "id:fold", position: 3, after: [1] },
+      { id: "id:verify", position: 4, after: [2, 3] },
+    ]);
+    expect(layout(after)).toEqual(layout(before));
+    expect(after?.items.map((item) => item.status)).toEqual([
+      "completed",
+      "in_progress",
+      "failed",
+      "pending",
+    ]);
   });
 
   it("picks the newest snapshot by sequence even when the input is unordered", () => {
@@ -101,15 +174,16 @@ describe("extractThreadTimelinePendingTodos", () => {
     expect(result?.items.map((item) => item.text)).toEqual(["third"]);
   });
 
-  it("does not split an astral character at the todo text limit", () => {
-    const prefix = "x".repeat(239);
+  it("keeps a step label longer than 240 characters whole for the banner", () => {
+    const label = `${"Migrate every stored plan snapshot ".repeat(7)}then 𠮷 run the final backfill check`;
     const result = extractThreadTimelinePendingTodos(ACTIVE, [
       planStepsEvent({
         seq: 1,
-        steps: [{ step: `${prefix}𠮷tail`, status: "active" }],
+        steps: [{ id: "a", step: `  ${label}  `, status: "active", needs: [] }],
       }),
     ]);
-    expect(result?.items[0]?.text).toBe(prefix);
+    expect(label.length).toBeGreaterThan(240);
+    expect(result?.items[0]?.text).toBe(label);
   });
 
   it("ignores an opened (pending) snapshot and an empty one clears the banner", () => {
@@ -127,7 +201,12 @@ describe("extractThreadTimelinePendingTodos", () => {
         planStepsEvent({ seq: 6, steps: [{ step: "old", status: "active" }] }),
         planStepsEvent({ seq: 7, steps: [] }),
       ]),
-    ).toEqual({ sourceSeq: 7, updatedAt: 7, items: [] });
+    ).toEqual({
+      sourceSeq: 7,
+      updatedAt: 7,
+      order: "dependencies-not-provided",
+      items: [],
+    });
   });
 
   it("does not read a tool call by its name, whatever its arguments carry", () => {

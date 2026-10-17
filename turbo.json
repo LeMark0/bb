@@ -670,6 +670,16 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest*.ts"],
       "passThroughEnv": ["DISPLAY"]
     },
+    "@bb/config#test": {
+      "env": ["VITEST_MAX_WORKERS"],
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest*.ts"],
+      "passThroughEnv": [
+        "UPDATE_PARITY_ROW_COUNTS",
+        "UPDATE_TRANSCRIPT_EXPECTATIONS",
+        "PSModuleAnalysisCachePath"
+      ]
+    },
     // plugin-scaffold-external packs @get-bb/plugin-sdk (prepack rebuilds its
     // dist), so the SDK build is a dependency.
     "@bb/templates#test": {
@@ -937,6 +947,25 @@
     // package `types` field; both land on bundled-types/, a build output.
     "bb-plugin-bb--storage-retention#typecheck": {
       "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/plugin-registry/flavors/**"
+      ]
+    },
+    "bb-plugin-bb--worker-progress#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/plugin-registry/flavors/**"
+      ]
+    },
+    "bb-plugin-bb--worker-progress#test": {
+      "env": ["VITEST_MAX_WORKERS"],
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/packages/plugin-registry/flavors/**"
