@@ -21,9 +21,6 @@ jobs:
     permissions:
       contents: read
     env:
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
-      CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
       TURBO_TELEMETRY_DISABLED: "1"
       DO_NOT_TRACK: "1"
 
@@ -43,11 +40,18 @@ jobs:
 
       - name: Setup pnpm
         timeout-minutes: 1
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: npm install --global pnpm@${{ env.PNPM_VERSION }} --ignore-scripts
 
       - name: Mirror control for the fake gh executable
         timeout-minutes: 1
         shell: bash
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
         run: node scripts/diagnostics/cr35-windows/gh-unlink-probe.mjs "$CR35_EVIDENCE_DIR" 2
 
       - name: Install dependencies
@@ -55,12 +59,19 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 5
         shell: bash
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter '@bb/db...' --filter '@bb/config...' --filter 'bb-plugin-github...'
 
       - name: Verified process stop test with same-child identity evidence
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         timeout-minutes: 4
         shell: bash
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
         run: |
           set -o pipefail
           mkdir -p "$CR35_EVIDENCE_DIR"
@@ -70,6 +81,10 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         timeout-minutes: 4
         shell: bash
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
         run: |
           mkdir -p "$CR35_EVIDENCE_DIR"
           failures=0
