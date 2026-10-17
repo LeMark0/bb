@@ -20,7 +20,7 @@ export function listEntry(
   return {
     projectId: "proj_1",
     environmentId: null,
-    providerId: "claude-code",
+    providerId: "acme",
     title: overrides.id,
     titleFallback: null,
     sectionId: null,
