@@ -1,0 +1,107 @@
+name: CR35 Windows diagnostic
+
+on:
+  push:
+    branches:
+      - cr35-windows-diagnostic-20261017
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: 22.x
+  PNPM_VERSION: 9.15.0
+
+jobs:
+  windows-diagnostic:
+    name: Windows process identity and fixture cleanup evidence
+    if: ${{ github.repository == 'LeMark0/bb' }}
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
+      CR35_EVIDENCE_DIR: ${{ runner.temp }}/cr35-evidence
+      TURBO_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+
+    steps:
+      - name: Checkout repository
+        timeout-minutes: 1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        timeout-minutes: 1
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Setup pnpm
+        timeout-minutes: 1
+        run: npm install --global pnpm@${{ env.PNPM_VERSION }} --ignore-scripts
+
+      - name: Mirror control for the fake gh executable
+        timeout-minutes: 1
+        shell: bash
+        run: node scripts/diagnostics/cr35-windows/gh-unlink-probe.mjs "$CR35_EVIDENCE_DIR" 2
+
+      - name: Install dependencies
+        id: install
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        shell: bash
+        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter '@bb/db...' --filter '@bb/config...' --filter 'bb-plugin-github...'
+
+      - name: Verified process stop test with same-child identity evidence
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$CR35_EVIDENCE_DIR"
+          pnpm exec turbo run test --filter=@bb/config --env-mode=loose --output-logs=full -- test/verified-process-stop.test.ts 2>&1 | tee "$CR35_EVIDENCE_DIR/verified-process-stop.log"
+
+      - name: GitHub RPC tests with fixture cleanup evidence
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          mkdir -p "$CR35_EVIDENCE_DIR"
+          failures=0
+          skipped=0
+          for run in 1 2 3; do
+            if [ "$run" -gt 1 ] && [ "$SECONDS" -ge 150 ]; then
+              echo "run $run skipped by the step deadline"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            if [ "$run" -eq 1 ]; then
+              command=(pnpm exec turbo run test --filter=bb-plugin-github --env-mode=loose --output-logs=full -- server.rpc.test.ts)
+            else
+              command=(pnpm --filter bb-plugin-github exec vitest run --config vitest.config.ts server.rpc.test.ts)
+            fi
+            if CR35_RUN="$run" "${command[@]}" > "$CR35_EVIDENCE_DIR/github-rpc-run-$run.log" 2>&1; then
+              echo "run $run passed after ${SECONDS}s"
+            else
+              echo "run $run failed after ${SECONDS}s"
+              failures=$((failures + 1))
+            fi
+          done
+          grep -h -E "EBUSY|EPERM|EACCES|Test Files|Tests  " "$CR35_EVIDENCE_DIR"/github-rpc-run-*.log || true
+          echo "failures=$failures skipped=$skipped" | tee "$CR35_EVIDENCE_DIR/github-rpc-summary.txt"
+          test "$failures" -eq 0 && test "$skipped" -eq 0
+
+      - name: Upload diagnostic evidence
+        if: ${{ !cancelled() }}
+        timeout-minutes: 1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cr35-windows-diagnostic-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cr35-evidence
+          retention-days: 7
+          if-no-files-found: error

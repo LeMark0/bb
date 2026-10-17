@@ -10,6 +10,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
+import {
+  childTraceSource,
+  traceFixtureCleanup,
+} from "./testing/cr35-cleanup-trace";
 import { installFakeGh } from "./testing/fake-gh";
 
 let binDir: string;
@@ -175,7 +179,7 @@ beforeEach(() => {
 
   restoreEnv = installFakeGh(
     binDir,
-    `const callLog = ${JSON.stringify(callLog)};
+    `${childTraceSource(binDir)}const callLog = ${JSON.stringify(callLog)};
 const joined = args.join(" ");
 fs.appendFileSync(callLog, joined + "\\n");
 const exact = {
@@ -199,9 +203,16 @@ out((exact[joined] ?? prefixMatch?.[1] ?? "[]") + "\\n");`,
   );
 });
 
-afterEach(() => {
+afterEach((context) => {
   restoreEnv();
-  rmSync(binDir, { recursive: true, force: true });
+  traceFixtureCleanup({ binDir, testName: context.task.name }, () =>
+    rmSync(binDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    }),
+  );
 });
 
 async function loadPlugin(extraRepos = "acme/widgets") {
