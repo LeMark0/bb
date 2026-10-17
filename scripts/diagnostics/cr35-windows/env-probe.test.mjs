@@ -127,7 +127,7 @@ test("the plan selects LOCALAPPDATA alone, repeats it around a baseline and stop
 test("refinement tries other allowed names only after the prioritised ones fail", async () => {
   const plan = fakePlan([...ALLOWLIST], (additions) => additions.includes("COMPUTERNAME"));
   const summary = await plan.run();
-  assert.deepEqual(plan.calls, ["B1", "U1", "L1", "P1", "LP1", "B2", "R-ProgramData", "R-ALLUSERSPROFILE", "R-COMPUTERNAME", "S2", "B3", "S3"]);
+  assert.deepEqual(plan.calls, ["B1", "U1", "L1", "P1", "LP1", "B2", "R-PSModuleAnalysisCachePath", "R-ProgramData", "R-ALLUSERSPROFILE", "R-COMPUTERNAME", "S2", "B3", "S3"]);
   assert.deepEqual(summary.subset, ["COMPUTERNAME"]);
   assert.equal(summary.supported, true);
 });
@@ -195,13 +195,19 @@ test("deadline exhaustion marks every later case as skipped", async () => {
   ]);
 });
 
-test("a probe run keeps captured values out of evidence and removes the private file", async () => {
+test("a probe run reaches the analysis-cache singleton, keeps captured values out of evidence and removes the private file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "cr35-env-probe-test-"));
   try {
     const marker = `SECRET-MARKER-${Date.now()}`;
     const reader = path.join(root, "fake-reader.mjs");
     writeFileSync(reader, "export async function readProcessIdentity() { return null; }\n");
-    const parentEnv = { PATH: "/bin", LOCALAPPDATA: `${marker}-local`, PSModulePath: `${marker}-modules`, OS: "Windows_NT" };
+    const parentEnv = {
+      PATH: "/bin",
+      LOCALAPPDATA: `${marker}-local`,
+      PSModulePath: `${marker}-modules`,
+      PSModuleAnalysisCachePath: `C:\\${marker}\\ModuleAnalysisCache`,
+      OS: "Windows_NT",
+    };
     const config = prepare({
       release: root,
       scratch: path.join(root, "scratch"),
@@ -220,7 +226,7 @@ test("a probe run keeps captured values out of evidence and removes the private 
       log: (line) => lines.push(line),
       importReader: async () => ({
         async readProcessIdentity() {
-          const restored = "LOCALAPPDATA" in taskEnv;
+          const restored = "PSModuleAnalysisCachePath" in taskEnv;
           await new Promise((resolve) => setTimeout(resolve, restored ? 5 : 80));
           return { command: "node -e x tok-test", startedAt: Date.now() };
         },
@@ -228,15 +234,26 @@ test("a probe run keeps captured values out of evidence and removes the private 
     });
     assert.equal(exitCode, 0);
     assert.equal(existsSync(config.privateValuesPath), false);
+    assert.equal("PSModuleAnalysisCachePath" in taskEnv, false);
     const summary = JSON.parse(readFileSync(path.join(root, "evidence", "summary.json"), "utf8"));
-    assert.deepEqual(summary.subset, ["LOCALAPPDATA"]);
+    assert.deepEqual(summary.subset, ["PSModuleAnalysisCachePath"]);
     assert.equal(summary.supported, true);
+    const ends = readFileSync(path.join(root, "evidence", "events.ndjson"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.type === "case-end");
+    assert.deepEqual(
+      ends.map((event) => event.caseId),
+      ["B1", "U1", "L1", "P1", "LP1", "B2", "R-PSModuleAnalysisCachePath", "S2", "B3", "S3"],
+    );
+    assert.deepEqual(ends.find((event) => event.caseId === "R-PSModuleAnalysisCachePath").applied, ["PSModuleAnalysisCachePath"]);
     for (const name of readdirSync(path.join(root, "evidence"))) {
       assert.ok(!readFileSync(path.join(root, "evidence", name), "utf8").includes(marker), name);
     }
     assert.ok(lines.length > 0 && lines.every((line) => !line.includes(marker)));
     assert.equal(scan({ evidence: path.join(root, "evidence"), env: parentEnv }), 0);
-    writeFileSync(path.join(root, "evidence", "leak.log"), `${marker}-local\n`);
+    writeFileSync(path.join(root, "evidence", "leak.log"), `${JSON.stringify({ leaked: parentEnv.PSModuleAnalysisCachePath })}\n`);
     assert.equal(scan({ evidence: path.join(root, "evidence"), env: parentEnv }), 3);
     assert.ok(!readFileSync(path.join(root, "evidence", "leak.log"), "utf8").includes(marker));
   } finally {

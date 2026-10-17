@@ -20,6 +20,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const ALLOWLIST = Object.freeze([
   "PSModulePath",
   "LOCALAPPDATA",
+  "PSModuleAnalysisCachePath",
   "ProgramData",
   "ALLUSERSPROFILE",
   "COMPUTERNAME",
