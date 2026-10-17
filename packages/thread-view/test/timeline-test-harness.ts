@@ -17,6 +17,7 @@ import type {
   SystemThreadProvisioningStatus,
   JsonValue,
   ThreadEventItemPresentation,
+  ThreadEventPlanStep,
   ThreadEventRow,
   ThreadEventRowOfType,
   SystemThreadInterruptedReason,
@@ -185,10 +186,7 @@ interface DelegationEventArgs extends ProviderTurnEventOptions {
 
 interface PlanStepsEventArgs extends ProviderTurnEventOptions {
   itemId?: string;
-  steps: Array<{
-    step: string;
-    status?: "pending" | "active" | "completed" | "failed";
-  }>;
+  steps: ThreadEventPlanStep[];
   explanation?: string;
   presentation?: ThreadEventItemPresentation;
   status?: "pending" | "completed" | "failed" | "interrupted";

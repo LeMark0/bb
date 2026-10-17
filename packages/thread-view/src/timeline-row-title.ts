@@ -236,6 +236,17 @@ function completedTurnDurationDecoration(
   };
 }
 
+function hasCommandIntentTitle(
+  presentation: TimelineRowPresentation | undefined,
+): presentation is TimelineRowPresentation & { title: string; detail: string } {
+  return (
+    presentation?.title !== undefined &&
+    presentation.title.trim().length > 0 &&
+    presentation.detail !== undefined &&
+    presentation.detail.trim().length > 0
+  );
+}
+
 function badgeDecorations(row: {
   presentation?: TimelineRowPresentation;
 }): TimelineTitleDecoration[] {
@@ -446,6 +457,19 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
     status !== "waiting" &&
     status !== "denied" &&
     !isCommand
+  ) {
+    return presentedTitle({
+      presentation: row.presentation,
+      status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    });
+  }
+  if (
+    isCommand &&
+    status !== "waiting" &&
+    status !== "denied" &&
+    hasCommandIntentTitle(row.presentation)
   ) {
     return presentedTitle({
       presentation: row.presentation,
