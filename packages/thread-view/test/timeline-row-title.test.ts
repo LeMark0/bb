@@ -452,6 +452,81 @@ describe("buildTimelineRowTitle", () => {
     ]);
   });
 
+  describe("command intent titles", () => {
+    const intentPresentation = {
+      label: { pending: "Running command", completed: "Ran command" },
+      icon: { glyph: "Terminal" },
+      title: "Run the app tests",
+      detail: "pnpm exec turbo run test --filter=@bb/app",
+    };
+
+    it("titles a command by the intent its provider supplied", () => {
+      const title = buildTimelineRowTitle(
+        { ...commandRow(), presentation: intentPresentation },
+        DEFAULT_OPTIONS,
+      );
+
+      expect(title.plain).toBe("Ran command Run the app tests (2s)");
+      expect(title.plain).not.toContain("pnpm");
+    });
+
+    it("keeps a running intent row live with its own duration", () => {
+      const title = buildTimelineRowTitle(
+        {
+          ...commandRow(),
+          status: "pending",
+          exitCode: null,
+          completedAt: null,
+          presentation: intentPresentation,
+        },
+        DEFAULT_OPTIONS,
+      );
+
+      expect(title.plain).toBe("Running command Run the app tests");
+      expect(title.segments[0]?.shimmer).toBe(true);
+      expect(title.decorations).toEqual([
+        { kind: "duration", startedAt: 1, completedAt: null, em: false },
+      ]);
+    });
+
+    it("shows the exact command while the row waits for approval", () => {
+      const title = buildTimelineRowTitle(
+        {
+          ...commandRow(),
+          status: "pending",
+          exitCode: null,
+          completedAt: null,
+          approvalStatus: "waiting_for_approval",
+          presentation: intentPresentation,
+        },
+        DEFAULT_OPTIONS,
+      );
+
+      expect(title.plain).toContain(
+        "pnpm exec turbo run test --filter=@bb/app",
+      );
+      expect(title.plain).not.toContain("Run the app tests");
+    });
+
+    it("keeps command titles when the provider gives no separate command detail", () => {
+      const title = buildTimelineRowTitle(
+        {
+          ...commandRow(),
+          presentation: {
+            label: intentPresentation.label,
+            icon: intentPresentation.icon,
+            title: "turbo run test",
+          },
+        },
+        DEFAULT_OPTIONS,
+      );
+
+      expect(title.plain).toBe(
+        "Ran pnpm exec turbo run test --filter=@bb/app (2s)",
+      );
+    });
+  });
+
   it("titles a generic tool row from its name and arguments, not from a label table", () => {
     expect(
       buildTimelineRowTitle(

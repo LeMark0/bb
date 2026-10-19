@@ -321,6 +321,21 @@ that value.
   background: boolean, summary?: string } // child turns link by parentRef
 ```
 
+**Plan steps** — each `planSteps` snapshot lists its steps in the
+provider's order:
+
+```ts
+{ step: string, status?: "pending" | "active" | "completed" | "failed",
+  id?: string, needs?: string[] } // needs: ids of steps this one waits for
+```
+
+bb shows a plan in dependency order only when every step has a unique `id`
+and `needs` naming other steps in the same snapshot without a cycle; ties keep
+the provider's order. Otherwise it keeps the provider's order and says why.
+Omit `needs` when the provider has no dependency data; `[]` means the step
+has no prerequisites. A malformed `id` or `needs` is dropped at parse and the
+step stays.
+
 **Presentation** — attached by the bridge at `item.open`, persisted with the
 item so it renders after the plugin is uninstalled or upgraded:
 
@@ -334,6 +349,13 @@ presentation: {
   tint?: { light: string, dark: string },
 }
 ```
+
+A `command` item's row shows its command line unless the provider knows why
+the command runs. To title the row by that intent, set `title` to it and
+`detail` to the command; the row then reads like other presented tools, its
+body still shows the full command, and approval and denial rows keep showing
+the command. A `title` without `detail` is treated as a reformatted command
+line and leaves the row's command title unchanged.
 
 `icon.glyph` is a name, never bytes or a path: a host glyph (`"FileText"`)
 or one of the plugin's own declared icons by its namespaced glyph

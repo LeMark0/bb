@@ -91,6 +91,17 @@ loses its native multi-agent feature and Claude Code its native Task tool. The p
 when a provider thread is started, resumed, or forked; they do not modify the
 provider's global configuration.
 
+Codex can give selected threads a larger context window through the Codex
+provider setting `contextWindowOverrides`, a JSON object keyed by bb thread id
+whose entries name the model, `contextWindow` and an optional
+`autoCompactTokenLimit`. An entry applies only while that thread runs the named
+model; other threads, including children, reviewers, forks and side chats,
+keep the Codex defaults. bb applies a change at the thread's next turn by
+resuming the same Codex thread with the new values, and removing the entry
+returns it to the defaults the same way. Set it with
+`bb plugin config provider-codex set contextWindowOverrides '<json>'`; the Codex
+provider skill explains how to choose the values.
+
 Claude Code's native Workflow tool can be disabled separately on its provider
 page. This preference also defaults off and applies to newly started, resumed,
 or forked provider sessions. Claude Code plugin settings (`disable1MContext`,

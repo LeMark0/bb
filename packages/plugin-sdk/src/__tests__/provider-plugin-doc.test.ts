@@ -8,6 +8,7 @@ import {
   providerRecoveryKindValues,
   threadEventDelegationItemSchema,
   threadEventItemPresentationSchema,
+  threadEventPlanStepSchema,
   type ThreadEventItemPresentation,
 } from "@bb/domain";
 import {
@@ -124,6 +125,16 @@ const DELEGATION_FIELDS = {
 } as const satisfies Record<
   string,
   keyof z.infer<typeof threadEventDelegationItemSchema> | Gap
+>;
+
+const PLAN_STEP_FIELDS = {
+  step: "step",
+  status: "status",
+  id: "id",
+  needs: "needs",
+} as const satisfies Record<
+  string,
+  keyof z.infer<typeof threadEventPlanStepSchema> | Gap
 >;
 
 type PresentationPath =
@@ -260,6 +271,7 @@ describe("guardrail G10: docs/provider-plugin-api.md matches the contract", () =
       "{ model, serviceTier?, reasoningLevel, promptMode?, sessionOptions?,",
       "// provider/recovery",
       "{ childRef: string, label: string, status: ItemStatus,",
+      '{ step: string, status?: "pending" | "active" | "completed" | "failed",',
       "presentation: {",
       "TimelineRow { kind: string, payload, presentation }",
       "app.slots.experimental_timelineRenderer({ kind, component });",
@@ -335,8 +347,8 @@ describe("guardrail G10: docs/provider-plugin-api.md matches the contract", () =
     expect(documentedKinds).toEqual([...providerRecoveryKindValues].sort());
   });
 
-  it("§3 delegation and presentation fields match the domain schemas", async () => {
-    const [, , , , , delegation, presentation] = extractTsBlocks(
+  it("§3 delegation, plan step and presentation fields match the domain schemas", async () => {
+    const [, , , , , delegation, planStep, presentation] = extractTsBlocks(
       await readFile(DOC_URL, "utf8"),
     );
     expect(fieldNames((delegation ?? "").replaceAll(",", ",\n"))).toEqual(
@@ -347,6 +359,16 @@ describe("guardrail G10: docs/provider-plugin-api.md matches the contract", () =
       schemaKeys(threadEventDelegationItemSchema),
       "delegation",
     );
+
+    expect(fieldNames((planStep ?? "").replaceAll(",", ",\n"))).toEqual(
+      Object.keys(PLAN_STEP_FIELDS).sort(),
+    );
+    const planStepKeys = schemaKeys(threadEventPlanStepSchema);
+    expectLandedPresent(PLAN_STEP_FIELDS, planStepKeys, "plan step");
+    expect(
+      [...planStepKeys].sort(),
+      "plan step: the schema has fields the doc does not describe",
+    ).toEqual(Object.keys(PLAN_STEP_FIELDS).sort());
 
     expect(
       fieldNames(
