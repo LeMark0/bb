@@ -1008,6 +1008,31 @@ plugin with host-only roots now resolves them this way.
 whether the server should detect the method on the host entry; and settle
 the cache TTL and the invalidation set against a real multi-host setup.
 
+## `PluginProviderOptionsContext.experimental_lineage` and `ExperimentalPluginProviderLineageEntry`
+
+**What it does.** Gives `deriveProviderOptions` the thread and then the
+threads it was forked from (`sourceThreadId`), nearest first and at most 16.
+The walk stops at a missing source or a thread already listed. Each entry
+carries `originPluginId` and that plugin's metadata on the thread, deep-frozen,
+or `{}`. The server reads it synchronously from the database for every session
+and turn command, whichever provider runs and whether or not it declares
+`deriveProviderOptions`: at most 16 thread lookups and 16 metadata lookups by
+primary key (`readProviderOptionsLineage` in
+`apps/server/src/services/threads/thread-provider-lineage.ts`). Metadata a
+creator passes with the spawn is written in the same insert, so the thread's
+first `thread.start` sees it. The only core caller is the command builder in
+`thread-commands.ts`; the first consumer is the Codex provider, which resolves
+`contextWindowOverrides` and `contextWindowPresets` from it, with the Tasks
+preset id that `delegate` and `presetSpawn` record.
+
+**Audit before stabilizing.** Decide whether providers should see every
+creator's metadata or only selected namespaces; whether parent links should
+join fork links; whether 16 is the right bound; whether to skip the read for
+providers without the hook; and whether a corrupt metadata row should be
+reported instead of read as `{}`. Any API client can rewrite
+thread metadata, so the field must stay documented as provenance, not access
+control.
+
 ## `experimental_nativeRootsHostContract` (`@get-bb/plugin-sdk/host`)
 
 **What it does.** The one-method RPC contract (`resolveNativeRoots`) a

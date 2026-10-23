@@ -23,7 +23,7 @@ tier to Codex as given. When the model does not list it, Codex runs the turn
 at its default tier and the thread shows its warning that the tier "is not
 advertised as supported" and was omitted.
 
-## Per-thread context window
+## Per-thread and per-preset context windows
 
 The `contextWindowOverrides` setting gives selected threads a larger Codex
 context window. It is a JSON object keyed by bb thread id; each entry names the
@@ -36,13 +36,38 @@ bb plugin config provider-codex set contextWindowOverrides '{"thr_abc234defg":{"
 bb sends `contextWindow` as Codex `model_context_window` and
 `autoCompactTokenLimit` as `model_auto_compact_token_limit` when it starts or
 resumes that thread's session. An entry applies only while the thread runs the
-named model, so a model change falls back to the Codex defaults. Threads
-without an entry are unaffected, including children and reviewers in the same
-project or worktree, and forks or side chats, which get their own thread ids.
-Omit `autoCompactTokenLimit` to keep the Codex default compaction threshold; it
-must be below `contextWindow` when present.
-bb rejects malformed JSON, keys that are not bb thread ids, unknown fields and
-non-integer or non-positive token counts when the setting is saved.
+named model, so a model change falls back to the Codex defaults. Omit
+`autoCompactTokenLimit` to keep the Codex default compaction threshold; it must
+be below `contextWindow` when present. A thread id mapped to `null` keeps that
+thread on the defaults.
+
+`contextWindowPresets` takes the same entries keyed by Tasks preset id. It
+covers threads that Tasks started from that preset, with `bb tasks dispatch`
+or `bb tasks preset spawn`, which record the preset id on the thread:
+
+```sh
+bb plugin config provider-codex set contextWindowPresets '{"01M46H89SV62BXPZ3HMXKAE6MN":{"model":"gpt-6-astra","contextWindow":872000,"autoCompactTokenLimit":784800}}'
+```
+
+bb decides each command from the thread and then the threads it was forked
+from, nearest first, and uses the first decision it finds:
+
+- a `contextWindowOverrides` entry for that thread, or `null`;
+- otherwise the preset that thread was started from, if Tasks recorded one:
+  its `contextWindowPresets` entry, or the defaults when the preset has none.
+
+So forks and side chats inherit their source's window, a fork recorded under
+another preset or mapped to `null` stops inheritance, and children and
+reviewers, which are not forks, keep their own settings. A model mismatch at
+the deciding thread means the defaults; bb does not look further back. Threads
+started with `bb thread spawn` record no preset, so only a thread entry covers
+them; a title or prompt naming a preset does not. The recorded preset id is
+ordinary thread metadata that any local API client can rewrite, so treat it as
+provenance for configuration, not as an access control.
+
+bb rejects malformed JSON, keys that are not bb thread ids or Tasks preset ids,
+unknown fields and non-integer or non-positive token counts when either
+setting is saved.
 
 Choose the values from the model's entry in `codex debug models`. In the Codex
 0.162.1 catalogue, `gpt-6-astra` has a 272000-token `context_window`, a
@@ -60,11 +85,15 @@ succeed; check `bb thread context <id>` after the next turn rather than
 treating the setting as proof.
 
 A change reaches a running thread at its next turn: bb rebuilds the Codex
-session on the same provider thread, keeping the conversation. Remove the
-entry, or run `bb plugin config provider-codex unset contextWindowOverrides`,
-to return to the defaults the same way. Before returning a thread to the
-default window, make sure its context is below the default reported window or
-compact it first.
+session on the same provider thread, keeping the conversation. Map a thread
+to `null` to put it on the defaults the same way. Removing a thread's entry,
+or unsetting a setting with
+`bb plugin config provider-codex unset contextWindowOverrides` (or
+`contextWindowPresets`), hands each affected thread back to the rest of the
+resolution order: its fork source or recorded preset may still give it a
+larger window, and only a thread with no other decision returns to the
+defaults. Before returning a thread to the default window, make sure its
+context is below the default reported window or compact it first.
 
 Use the core CLI skill for command syntax and official Codex guidance for
 upstream product behavior.

@@ -450,7 +450,7 @@ threads as well as new ones, and to the conversation outline and
 `bb settings completed-turns`.
 
 Each provider's own options live on its plugin: Codex memory, native subagents
-and per-thread context windows under the Codex provider plugin, and Claude
+and per-thread and per-preset context windows under the Codex provider plugin, and Claude
 Code memory, native subagents, and the Workflow tool under the Claude Code
 provider plugin.
 
@@ -458,14 +458,25 @@ Codex's **Per-thread context windows** provider setting
 (`contextWindowOverrides`) is empty by default, so every thread uses the Codex
 model defaults. Set it to a JSON object keyed by bb thread id, with
 `bb plugin config provider-codex set contextWindowOverrides '{"thr_abc234defg":{"model":"gpt-6-astra","contextWindow":872000,"autoCompactTokenLimit":784800}}'`.
-An entry applies only while that thread runs the named model. bb passes it to
-Codex as `model_context_window` and the optional
-`model_auto_compact_token_limit`, and rebuilds the thread's Codex session on
-the same provider thread before its next turn. Threads without an entry are
-unchanged. The example requests the catalogue's maximum raw window for
+An entry applies only while that thread runs the named model, and `null`
+keeps a thread on the defaults. bb passes an entry to Codex as
+`model_context_window` and the optional `model_auto_compact_token_limit`, and
+rebuilds the thread's Codex session on the same provider thread before its
+next turn. The example requests the catalogue's maximum raw window for
 `gpt-6-astra` and sets compaction at 90% of it; the Codex provider skill
 explains those values and what remains unverified about Codex's effective
 window and clamping.
+
+Codex's **Context windows by dispatch preset** setting
+(`contextWindowPresets`), also empty by default, takes the same entries keyed
+by Tasks preset id. It covers threads that `bb tasks dispatch` or
+`bb tasks preset spawn` started from that preset; both record the preset id on
+the thread. For each command bb looks at the thread and then the threads it
+was forked from, nearest first: a thread entry (or `null`) decides, otherwise
+a recorded preset decides, with its entry or the defaults. Forks and side
+chats therefore inherit their source's window unless they carry their own
+decision. Threads without either, including children and threads started with
+`bb thread spawn`, keep the Codex defaults.
 
 Claude Code's **Disable 1M context** provider setting (`disable1MContext`)
 defaults to `false`. Enable it with

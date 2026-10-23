@@ -29,6 +29,7 @@ import {
   requireDispatchableProviderThreadId,
 } from "./thread-events.js";
 import type { ThreadForkDescriptor } from "./thread-startup-store.js";
+import { readProviderOptionsLineage } from "./thread-provider-lineage.js";
 import {
   resolveThreadRuntimeCommandConfig,
   type ResolvedThreadRuntimeCommandConfig,
@@ -209,6 +210,10 @@ function toRuntimeExecutionOptions(
       model: args.execution.model,
       permissionMode,
       ...(promptMode !== undefined ? { promptMode } : {}),
+      experimental_lineage: readProviderOptionsLineage(
+        args.deps.db,
+        args.threadId,
+      ),
     }) ?? {};
   const base = {
     model: args.execution.model,

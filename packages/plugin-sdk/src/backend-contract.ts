@@ -1373,6 +1373,26 @@ export interface PluginProviderOptionsContext {
    * derived into them.
    */
   settings: Readonly<Record<string, PluginSettingValue | undefined>>;
+  /**
+   * This thread followed by the threads it was forked from, nearest first,
+   * at most 16 entries. The walk stops early at a missing source thread or a
+   * thread already listed.
+   */
+  experimental_lineage: readonly ExperimentalPluginProviderLineageEntry[];
+}
+
+/** One thread in {@link PluginProviderOptionsContext.experimental_lineage}. */
+export interface ExperimentalPluginProviderLineageEntry {
+  threadId: string;
+  /** The plugin that created this thread, or `null` for a thread no plugin created. */
+  originPluginId: string | null;
+  /**
+   * The creating plugin's metadata on this thread, or `{}` when there is
+   * none. The creator usually writes it with the thread, so it is present for
+   * the thread's first command. Any API client, another plugin, or the
+   * thread's own agent can change it later; treat values as untrusted.
+   */
+  readonly originPluginMetadata: { readonly [key: string]: ReadonlyJsonValue };
 }
 
 /** See {@link PluginProviderDeclaration.models}. */

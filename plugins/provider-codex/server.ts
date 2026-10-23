@@ -5,6 +5,7 @@ import { codexExtensionKinds } from "./src/extension-kinds.js";
 import { CODEX_NATIVE_ROOTS_DECLARATION } from "./src/native-roots.js";
 import {
   contextWindowOverridesSettingSchema,
+  contextWindowPresetsSettingSchema,
   contextWindowProviderOptions,
 } from "./src/context-window-overrides.js";
 
@@ -31,9 +32,18 @@ export default function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Per-thread context windows",
       description:
-        "A JSON object keyed by bb thread id whose entries set model, contextWindow and an optional autoCompactTokenLimit. An entry applies only while that thread runs that model; every other thread keeps the Codex defaults.",
+        "A JSON object keyed by bb thread id whose entries set model, contextWindow and an optional autoCompactTokenLimit, or null to keep that thread on the Codex defaults. An entry also covers the thread's forks and takes precedence over a preset entry. It applies only while the thread runs that model; every other thread keeps the Codex defaults.",
       experimental_multiline: true,
       experimental_schema: contextWindowOverridesSettingSchema,
+      default: "",
+    },
+    contextWindowPresets: {
+      type: "string",
+      label: "Context windows by dispatch preset",
+      description:
+        "A JSON object keyed by Tasks preset id, with the same entries. An entry covers threads that Tasks started from that preset (bb tasks dispatch or bb tasks preset spawn) and their forks, while they run that model. A thread started from another preset keeps the Codex defaults.",
+      experimental_multiline: true,
+      experimental_schema: contextWindowPresetsSettingSchema,
       default: "",
     },
   });
@@ -93,8 +103,9 @@ export default function plugin(bb: BbPluginApi) {
         memoryEnabled: context.settings.memoryEnabled !== false,
         providerSubagentsEnabled: context.settings.subagentsDisabled !== true,
         ...contextWindowProviderOptions({
-          settingValue: context.settings.contextWindowOverrides,
-          threadId: context.threadId,
+          overridesValue: context.settings.contextWindowOverrides,
+          presetsValue: context.settings.contextWindowPresets,
+          lineage: context.experimental_lineage,
           model: context.model,
         }),
       };

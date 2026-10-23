@@ -158,6 +158,16 @@ health; bridge failures hide only that provider.
 Its plain JSON result has the same 64 KiB limit. The runtime merges the result
 over `experimental_bridgeOptions`; a derived key replaces its static key.
 
+`ctx.experimental_lineage` lists the thread and then the threads it was forked
+from, nearest first and at most 16. Each `ExperimentalPluginProviderLineageEntry`
+carries `threadId`; `originPluginId`, the plugin that created that thread; and
+`originPluginMetadata`, that plugin's thread metadata (`{}` when there is
+none). A creator that passes
+`pluginMetadata` to `bb.sdk.threads.spawn` makes it visible on the thread's
+first command. Use it to key options on how a thread was created, such as the
+Tasks preset id; any API client can rewrite thread metadata, so do not use it
+for access control.
+
 ### `bb.providers.experimental_contributeEnv` — per-command provider environment
 
 A plugin can contribute environment variables to any provider, including one

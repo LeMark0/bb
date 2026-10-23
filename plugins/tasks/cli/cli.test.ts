@@ -2189,6 +2189,106 @@ describe("bb tasks CLI", () => {
     await harness.dispose();
   });
 
+  it("starts a thread from a preset without a task and records the preset", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bb-tasks-cli-"));
+    const bootstrap = join(directory, "bootstrap.md");
+    await writeFile(
+      bootstrap,
+      "Bootstrap the channel\n\nStart no work now.\n\n",
+      "utf8",
+    );
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      sdk: {
+        files: localFilesSdk(),
+        threads: { spawn: async () => ({ id: "thr_presetspawn" }) },
+      },
+    });
+    await plugin(bb);
+    const created = JSON.parse(
+      stdout(
+        await harness.runCli([
+          "preset",
+          "create",
+          "--name",
+          "Coordinator",
+          "--provider",
+          "codex",
+          "--model",
+          "gpt-6-astra",
+          "--reasoning",
+          "xhigh",
+          "--service-tier",
+          "default",
+          "--permission",
+          "full",
+          "--json",
+        ]),
+      ),
+    ) as { preset: { id: string } };
+
+    const spawned = JSON.parse(
+      stdout(
+        await harness.runCli([
+          "preset",
+          "spawn",
+          "coordinator",
+          "--project",
+          "proj_bb",
+          "--environment",
+          "env_shared",
+          "--title",
+          "Slack session",
+          "--visibility",
+          "visible",
+          "--reasoning",
+          "high",
+          "--prompt-file",
+          bootstrap,
+          "--json",
+        ]),
+      ),
+    );
+    const both = await harness.runCli([
+      "preset",
+      "spawn",
+      "coordinator",
+      "--project",
+      "proj_bb",
+      "--prompt",
+      "inline",
+      "--prompt-file",
+      bootstrap,
+    ]);
+
+    expect(both.exitCode).toBe(1);
+    expect(spawned).toMatchObject({
+      threadId: "thr_presetspawn",
+      preset: { id: created.preset.id },
+    });
+    expect(harness.sdk.callsTo("threads.spawn")).toEqual([
+      [
+        expect.objectContaining({
+          projectId: "proj_bb",
+          environment: { type: "reuse", environmentId: "env_shared" },
+          providerId: "codex",
+          model: "gpt-6-astra",
+          reasoningLevel: "high",
+          serviceTier: "default",
+          permissionMode: "full",
+          title: "Slack session",
+          visibility: "visible",
+          prompt: "Bootstrap the channel\n\nStart no work now.",
+          origin: "plugin",
+          originPluginId: "tasks",
+          pluginMetadata: { presetId: created.preset.id },
+        }),
+      ],
+    ]);
+
+    await harness.dispose();
+  });
+
   it("returns a friendly dispatch error when the task project is not linked", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     await plugin(bb);

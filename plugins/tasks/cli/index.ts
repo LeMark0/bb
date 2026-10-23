@@ -2235,6 +2235,7 @@ export function registerTasksCli(
             ["create", "Create a preset"],
             ["update", "Update a preset"],
             ["delete", "Delete a preset"],
+            ["spawn", "Start a thread from a preset without a task"],
           ],
         ),
         "preset list": cliCommand({
@@ -2567,6 +2568,115 @@ export function registerTasksCli(
               return input.options.json
                 ? JSON.stringify({ ...result, preset })
                 : `Deleted preset ${preset.name}`;
+            });
+          },
+        }),
+        "preset spawn": cliCommand({
+          summary: "Start a thread from a preset without a task",
+          positionals: [
+            {
+              name: "name-or-id",
+              description: "Preset name (case-insensitive) or its ULID",
+              required: true,
+            },
+          ],
+          options: {
+            project: {
+              type: "string",
+              required: true,
+              placeholder: "proj_id",
+              description: "bb project the thread belongs to",
+            },
+            prompt: {
+              type: "string",
+              placeholder: "text",
+              description:
+                "First message, sent as given; the preset's instructions are not added",
+            },
+            "prompt-file": {
+              type: "string",
+              placeholder: "path",
+              description:
+                "Read the first message from this UTF-8 file on the invoking machine; trailing newlines are dropped",
+            },
+            machine: MACHINE_OPTION,
+            title: { type: "string", description: "Thread title" },
+            environment: {
+              type: "string",
+              placeholder: "env_id",
+              description:
+                "Existing environment to reuse; omit to follow the preset's environment",
+            },
+            visibility: {
+              type: "enum",
+              values: ["visible", "hidden"],
+              description: "Thread visibility",
+            },
+            reasoning: {
+              type: "enum",
+              values: presetReasoningLevelSchema.options,
+              description:
+                "Reasoning level for this thread instead of the preset's",
+            },
+            "service-tier": {
+              type: "string",
+              placeholder: "tier",
+              description:
+                "Service tier for this thread instead of the preset's",
+            },
+            permission: {
+              type: "enum",
+              values: PRESET_PERMISSION_MODES,
+              description:
+                "Permission mode for this thread instead of the preset's",
+            },
+            json: JSON_OPTION,
+          },
+          constraints: [
+            { kind: "exactly-one", options: ["prompt", "prompt-file"] },
+          ],
+          run(input, ctx) {
+            return guard(async () => {
+              const preset = resolvePreset(
+                await listPresets(domain),
+                input.positionals["name-or-id"],
+              );
+              const promptFile = input.options["prompt-file"];
+              const prompt =
+                promptFile === undefined
+                  ? input.options.prompt
+                  : (
+                      await readTextOption(
+                        bb,
+                        ctx,
+                        await resolveClientHostId(
+                          bb,
+                          domain,
+                          input.options.machine,
+                          ctx,
+                        ),
+                        undefined,
+                        promptFile,
+                      )
+                    )?.replace(/\r?\n+$/u, "");
+              const result = delegationRpcContract.presetSpawn.output.parse(
+                await delegationHandlers(bb, store).presetSpawn(
+                  delegationRpcContract.presetSpawn.input.parse({
+                    presetId: preset.id,
+                    projectId: input.options.project,
+                    prompt,
+                    title: input.options.title,
+                    environmentId: input.options.environment,
+                    visibility: input.options.visibility,
+                    reasoningLevel: input.options.reasoning,
+                    serviceTier: input.options["service-tier"],
+                    permissionMode: input.options.permission,
+                  }),
+                ),
+              );
+              return input.options.json
+                ? JSON.stringify({ preset, ...result })
+                : result.threadId;
             });
           },
         }),
