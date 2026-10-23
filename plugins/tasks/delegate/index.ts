@@ -156,6 +156,10 @@ function requirePreset(store: TasksStore, presetId: string): Preset {
   return preset;
 }
 
+function presetProvenance(preset: Preset): { presetId: string } {
+  return { presetId: preset.id };
+}
+
 function requireLinkedBbProject(project: Project): string {
   if (project.linkedBbProjectId) return project.linkedBbProjectId;
   throw new DelegationError(
@@ -339,6 +343,7 @@ export function handlers(
           permissionMode: execution.permissionMode,
           title,
           prompt,
+          pluginMetadata: presetProvenance(preset),
         })
         .catch((error: unknown) => mapSpawnTargetError(error, preset));
 
@@ -391,6 +396,41 @@ export function handlers(
       publishThreadsChanged(bb, task.id);
       publishTasksChanged(bb, task.id, task.projectId);
       publishCommentsChanged(bb, task.id);
+      return { threadId: thread.id };
+    },
+
+    async presetSpawn(input) {
+      const preset = requirePreset(store.tasks, input.presetId);
+      const execution = presetExecutionSchema.parse({
+        providerId: preset.providerId,
+        model: preset.modelId,
+        reasoningLevel: input.reasoningLevel ?? preset.reasoningLevel,
+        serviceTier: input.serviceTier ?? preset.serviceTier,
+        permissionMode: input.permissionMode ?? preset.permissionMode,
+      });
+      const environment: SpawnEnvironment =
+        input.environmentId === undefined
+          ? await presetSpawnEnvironment(bb, preset)
+          : { type: "reuse", environmentId: input.environmentId };
+      const thread = await bb.sdk.threads
+        .spawn({
+          projectId: input.projectId,
+          environment,
+          providerId: execution.providerId,
+          model: execution.model,
+          reasoningLevel: execution.reasoningLevel,
+          ...(execution.serviceTier === null
+            ? {}
+            : { serviceTier: execution.serviceTier }),
+          permissionMode: execution.permissionMode,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.visibility === undefined
+            ? {}
+            : { visibility: input.visibility }),
+          prompt: input.prompt,
+          pluginMetadata: presetProvenance(preset),
+        })
+        .catch((error: unknown) => mapSpawnTargetError(error, preset));
       return { threadId: thread.id };
     },
 

@@ -103,6 +103,7 @@ describe("buildPluginProviderRegistration", () => {
         projectId: "proj_1",
         model: "m",
         permissionMode: "full",
+        experimental_lineage: [],
       }),
     ).toStrictEqual({});
   });
@@ -200,6 +201,7 @@ describe("buildPluginProviderRegistration", () => {
         model: "m-1",
         permissionMode: "auto",
         promptMode: "plan",
+        experimental_lineage: [],
       }),
     ).toStrictEqual({ memory: false, plan: true, thread: "thr_1" });
     expect(registration.envPassthrough).toStrictEqual([
@@ -239,6 +241,7 @@ describe("buildPluginProviderRegistration", () => {
         projectId: "proj_1",
         model: "m",
         permissionMode: "full",
+        experimental_lineage: [],
       }),
     ).toThrow(/deriveProviderOptions result/);
   });

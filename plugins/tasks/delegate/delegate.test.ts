@@ -84,6 +84,7 @@ describe("task delegation", () => {
           ),
           origin: "plugin",
           originPluginId: "tasks",
+          pluginMetadata: { presetId: preset.id },
         }),
       ],
     ]);

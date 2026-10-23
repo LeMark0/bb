@@ -29,6 +29,7 @@ function providerOptions(
     model: "claude-sonnet-5",
     permissionMode: "accept-edits",
     settings,
+    experimental_lineage: [],
   });
 }
 
