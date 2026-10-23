@@ -201,7 +201,12 @@ out((exact[joined] ?? prefixMatch?.[1] ?? "[]") + "\\n");`,
 
 afterEach(() => {
   restoreEnv();
-  rmSync(binDir, { recursive: true, force: true });
+  rmSync(binDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 50,
+  });
 });
 
 async function loadPlugin(extraRepos = "acme/widgets") {

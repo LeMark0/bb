@@ -1,8 +1,15 @@
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import type {
   ThreadTimelinePendingTodoItem,
   ThreadTimelinePendingTodoItemStatus,
   ThreadTimelinePendingTodos,
 } from "@bb/domain";
+import {
+  describePlanStep,
+  formatPlanStepAfter,
+  PLAN_STEP_ORDER_CAPTION,
+  type PlanStepStatusPhrase,
+} from "@bb/thread-view";
 import { AnimatedDisclosureBody } from "@/components/promptbox/banner/AnimatedBody";
 import {
   PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
@@ -11,10 +18,12 @@ import {
 } from "@/components/promptbox/banner/PromptStackCard";
 import {
   activityIconClass,
+  activityMetaClass,
   activityRowClass,
   activityTextClass,
   type ActivityRowState,
 } from "@bb/shared-ui/activity-row-styles";
+import { REDUCED_MOTION_QUERY } from "@bb/shared-ui/hooks/use-media-query";
 import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
@@ -23,12 +32,6 @@ import {
   useDisclosureFocusHandoff,
 } from "@bb/shared-ui/prompt-stack-disclosure";
 
-const STATUS_SORT_RANK: Record<ThreadTimelinePendingTodoItemStatus, number> = {
-  in_progress: 0,
-  pending: 1,
-  completed: 2,
-};
-
 const STATUS_ACTIVITY_STATE: Record<
   ThreadTimelinePendingTodoItemStatus,
   ActivityRowState
@@ -36,6 +39,17 @@ const STATUS_ACTIVITY_STATE: Record<
   in_progress: "active",
   pending: "pending",
   completed: "completed",
+  failed: "completed",
+};
+
+const STATUS_PHRASE: Record<
+  ThreadTimelinePendingTodoItemStatus,
+  PlanStepStatusPhrase
+> = {
+  in_progress: "in progress",
+  pending: "pending",
+  completed: "completed",
+  failed: "failed",
 };
 
 interface ThreadTodoCardProps {
@@ -93,6 +107,14 @@ function TodoStatusIcon({
           aria-hidden="true"
         />
       );
+    case "failed":
+      return (
+        <Icon
+          name="X"
+          className={cn(className, activityIconClass(activityState))}
+          aria-hidden="true"
+        />
+      );
     case "pending":
       return (
         <Icon
@@ -104,44 +126,140 @@ function TodoStatusIcon({
   }
 }
 
+function revealRowInList(
+  list: HTMLElement,
+  row: HTMLElement,
+  smooth: boolean,
+): void {
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const offset =
+    rowRect.top < listRect.top
+      ? rowRect.top - listRect.top
+      : rowRect.bottom > listRect.bottom
+        ? rowRect.bottom - listRect.bottom
+        : 0;
+  if (offset === 0) return;
+  const top = list.scrollTop + offset;
+  if (smooth && !window.matchMedia(REDUCED_MOTION_QUERY).matches) {
+    list.scrollTo({ top, behavior: "smooth" });
+  } else {
+    list.scrollTop = top;
+  }
+}
+
+function useRevealActiveTodo(
+  listRef: RefObject<HTMLUListElement | null>,
+  activeRowRef: RefObject<HTMLLIElement | null>,
+  isExpanded: boolean,
+  activeItemId: string | null,
+): void {
+  const revealedRef = useRef<{
+    isExpanded: boolean;
+    activeItemId: string | null;
+  }>({ isExpanded: false, activeItemId: null });
+  useLayoutEffect(() => {
+    const previous = revealedRef.current;
+    revealedRef.current = { isExpanded, activeItemId };
+    if (!isExpanded || activeItemId === null) return;
+    const opened = !previous.isExpanded;
+    if (!opened && previous.activeItemId === activeItemId) return;
+    const list = listRef.current;
+    const row = activeRowRef.current;
+    if (list === null || row === null) return;
+    revealRowInList(list, row, !opened);
+  }, [activeItemId, activeRowRef, isExpanded, listRef]);
+}
+
 function TodoBody({
-  items,
+  pendingTodos,
+  isExpanded,
 }: {
-  items: readonly ThreadTimelinePendingTodoItem[];
+  pendingTodos: ThreadTimelinePendingTodos;
+  isExpanded: boolean;
 }) {
-  const ordered = [...items].sort(
-    (a, b) => STATUS_SORT_RANK[a.status] - STATUS_SORT_RANK[b.status],
-  );
+  const { order, items } = pendingTodos;
+  const listRef = useRef<HTMLUListElement>(null);
+  const activeRowRef = useRef<HTMLLIElement>(null);
+  const activeItemId =
+    items.find((item) => item.status === "in_progress")?.id ?? null;
+  useRevealActiveTodo(listRef, activeRowRef, isExpanded, activeItemId);
+  const showsDependencies = order === "dependencies";
   return (
-    <ul className="max-h-40 space-y-1 overflow-y-auto px-2.5 pb-2 pt-2">
-      {ordered.map((item) => {
-        const activityState = STATUS_ACTIVITY_STATE[item.status];
-        const isActive = activityState === "active";
-        return (
-          <li
-            key={item.id}
-            className={activityRowClass(
-              activityState,
-              cn(
-                "flex min-w-0 items-center gap-2 text-xs",
-                isActive && TODO_ACTIVE_ROW_CLASS,
-              ),
-            )}
-          >
-            <TodoStatusIcon status={item.status} />
-            <span
-              className={activityTextClass(
+    <>
+      <ul
+        ref={listRef}
+        className="max-h-40 space-y-1 overflow-y-auto px-2.5 pb-1 pt-2"
+      >
+        {items.map((item) => {
+          const activityState = STATUS_ACTIVITY_STATE[item.status];
+          const isActive = item.status === "in_progress";
+          const afterNote = showsDependencies
+            ? formatPlanStepAfter(item.after)
+            : null;
+          return (
+            <li
+              key={item.id}
+              ref={item.id === activeItemId ? activeRowRef : undefined}
+              className={activityRowClass(
                 activityState,
-                "min-w-0 flex-1 truncate",
+                cn(
+                  "flex min-w-0 items-center gap-2 text-xs",
+                  isActive && TODO_ACTIVE_ROW_CLASS,
+                ),
               )}
-              title={item.text}
             >
-              {item.text}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+              <span className="sr-only">
+                {describePlanStep({
+                  order,
+                  position: item.position,
+                  total: items.length,
+                  status: STATUS_PHRASE[item.status],
+                  after: item.after,
+                  text: item.text,
+                })}
+              </span>
+              {showsDependencies ? (
+                <span
+                  aria-hidden="true"
+                  className={activityMetaClass(
+                    activityState,
+                    "min-w-4 shrink-0 text-right tabular-nums",
+                  )}
+                >
+                  {item.position}
+                </span>
+              ) : null}
+              <TodoStatusIcon status={item.status} />
+              <span
+                aria-hidden="true"
+                className={activityTextClass(
+                  activityState,
+                  "min-w-0 flex-1 truncate",
+                )}
+                title={item.text}
+              >
+                {item.text}
+              </span>
+              {afterNote === null ? null : (
+                <span
+                  aria-hidden="true"
+                  className={activityMetaClass(
+                    activityState,
+                    "shrink-0 tabular-nums",
+                  )}
+                >
+                  {afterNote}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className={activityMetaClass("muted", "px-4.5 pb-2 text-xs")}>
+        {PLAN_STEP_ORDER_CAPTION[order]}
+      </p>
+    </>
   );
 }
 
@@ -151,11 +269,10 @@ export function ThreadTodoCard({
   onToggle,
 }: ThreadTodoCardProps) {
   const focus = useDisclosureFocusHandoff(isExpanded, onToggle);
-  const items = pendingTodos?.items ?? [];
-  if (items.length === 0) {
+  if (pendingTodos === null || pendingTodos.items.length === 0) {
     return null;
   }
-  const summary = getTodoSummary(items);
+  const summary = getTodoSummary(pendingTodos.items);
   return (
     <PromptStackCard
       ariaLabel="To-do list"
@@ -201,7 +318,7 @@ export function ThreadTodoCard({
         collapseRef={focus.collapseRef}
         onCollapse={focus.onCollapseClick}
       >
-        <TodoBody items={items} />
+        <TodoBody pendingTodos={pendingTodos} isExpanded={isExpanded} />
       </AnimatedDisclosureBody>
     </PromptStackCard>
   );

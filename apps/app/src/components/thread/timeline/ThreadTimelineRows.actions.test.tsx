@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState, type ComponentProps, type ReactElement } from "react";
 import { MemoryRouter, useNavigate } from "react-router-dom";
@@ -37,11 +38,20 @@ function messageActionRegistrationSet(
 }
 
 const toMarkup = (ui: ReactElement) =>
-  renderToStaticMarkup(<MemoryRouter>{ui}</MemoryRouter>);
+  renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 const renderWithRouter = (
   ui: ReactElement,
   initialEntries: ComponentProps<typeof MemoryRouter>["initialEntries"] = ["/"],
-) => render(<MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>);
+) =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 
 function selectMessageMenuItem(name: string) {
   fireEvent.pointerDown(
@@ -426,10 +436,17 @@ describe("ThreadTimelineRows actions", () => {
             attachments: {
               webImages: 0,
               localImages: 1,
-              localFiles: 0,
+              localFiles: 1,
               imageUrls: [],
               localImagePaths: ["uploads/screenshot.png"],
-              localFilePaths: [],
+              localFilePaths: ["uploads/pasted.txt"],
+              localFileDetails: [
+                {
+                  path: "uploads/pasted.txt",
+                  name: "Pasted text.txt",
+                  sizeBytes: 3638577,
+                },
+              ],
             },
           }),
         ]}
@@ -443,7 +460,15 @@ describe("ThreadTimelineRows actions", () => {
     expect(onEditMessage).toHaveBeenCalledWith({
       messageId: expect.any(String),
       expectedRequestSequence: 11,
-      input: [{ type: "localImage", path: "uploads/screenshot.png" }],
+      input: [
+        { type: "localImage", path: "uploads/screenshot.png" },
+        {
+          type: "localFile",
+          path: "uploads/pasted.txt",
+          name: "Pasted text.txt",
+          sizeBytes: 3638577,
+        },
+      ],
     });
   });
 
@@ -467,6 +492,7 @@ describe("ThreadTimelineRows actions", () => {
               imageUrls: ["https://example.com/remote.png"],
               localImagePaths: [],
               localFilePaths: [],
+              localFileDetails: [],
             },
           }),
         ]}
@@ -513,6 +539,7 @@ describe("ThreadTimelineRows actions", () => {
               imageUrls: [],
               localImagePaths: [],
               localFilePaths: ["uploads/spec.md"],
+              localFileDetails: [],
             },
           }),
         ]}
@@ -593,7 +620,7 @@ describe("ThreadTimelineRows actions", () => {
     expect(markup).toContain("Streaming assistant response.");
     expect(markup).toContain('aria-label="Copy message"');
     expect(markup).toContain('aria-label="Message actions"');
-    expect(markup).toContain("max-md:pointer-coarse:opacity-100");
+    expect(markup).toContain("[@media(hover:none)]:opacity-100");
   });
 
   it("hides assistant message actions inside delegation rows", () => {
@@ -668,6 +695,7 @@ describe("ThreadTimelineRows actions", () => {
               imageUrls: ["https://example.com/remote.png"],
               localImagePaths: ["uploads/screenshot.png"],
               localFilePaths: ["uploads/spec.md"],
+              localFileDetails: [],
             },
           }),
         ]}
@@ -732,6 +760,7 @@ describe("ThreadTimelineRows actions", () => {
               imageUrls: ["https://example.com/remote.png"],
               localImagePaths: ["uploads/screenshot.png"],
               localFilePaths: ["uploads/spec.md"],
+              localFileDetails: [],
             },
           }),
         ]}
@@ -774,6 +803,7 @@ describe("ThreadTimelineRows actions", () => {
               imageUrls: [],
               localImagePaths: [],
               localFilePaths: ["uploads/spec.md"],
+              localFileDetails: [],
             },
           }),
         ]}

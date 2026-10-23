@@ -135,9 +135,15 @@ const threadEventPlanStepStatusSchema = z.enum([
   "failed",
 ]);
 
+function absentWhenMalformed<T extends z.ZodType>(schema: T) {
+  return schema.optional().catch(undefined).optional();
+}
+
 export const threadEventPlanStepSchema = z.object({
   step: z.string(),
   status: threadEventPlanStepStatusSchema.optional(),
+  id: absentWhenMalformed(z.string()),
+  needs: absentWhenMalformed(z.array(z.string())),
 });
 export type ThreadEventPlanStep = z.infer<typeof threadEventPlanStepSchema>;
 
@@ -299,11 +305,18 @@ export type ThreadEventTokenUsageBreakdown = z.infer<
   typeof threadEventTokenUsageBreakdownSchema
 >;
 
+export const threadUsageCostSchema = z.object({
+  amount: z.number().nonnegative(),
+  currency: z.string().min(1),
+});
+export type ThreadUsageCost = z.infer<typeof threadUsageCostSchema>;
+
 const threadEventContextWindowUsageSchema = z.object({
   snapshot: contextSnapshotSchema.optional(),
   usedTokens: z.number().nullable(),
   modelContextWindow: z.number().nullable(),
   estimated: z.boolean(),
+  cost: threadUsageCostSchema.optional(),
 });
 export type ThreadEventContextWindowUsage = z.infer<
   typeof threadEventContextWindowUsageSchema
@@ -512,6 +525,7 @@ const unscopedProviderEventSchema = z.discriminatedUnion("type", [
     threadId: z.string(),
     providerThreadId: z.string(),
     threadName: z.string(),
+    source: z.literal("agent").optional(),
   }),
   z.object({
     type: z.literal("thread/compacted"),

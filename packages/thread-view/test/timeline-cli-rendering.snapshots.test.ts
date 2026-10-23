@@ -859,7 +859,7 @@ describe("timeline CLI rendering snapshots", () => {
     ]);
   });
 
-  it("shows provisioning failure as user input, operation, and error", () => {
+  it("shows provisioning failure once with its transcript and error detail", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const timeline = renderTimelineFixture({
       events: [
@@ -903,21 +903,13 @@ describe("timeline CLI rendering snapshots", () => {
       },
     });
 
-    expect(messageKinds(timeline.messages)).toEqual([
-      "user",
-      "operation",
-      "error",
-    ]);
+    expect(messageKinds(timeline.messages)).toEqual(["user", "operation"]);
     expect(timeline.text).toMatchInlineSnapshot(`
       "── User ────────────────────────────────────────────────────
       Start the failing workspace
 
       ── Provisioning thread failed ──────────────────────────────
         Running setup
-        pnpm install failed
-
-      ── Error ───────────────────────────────────────────────────
-        Provisioning thread failed
         pnpm install failed"
     `);
   });
@@ -1200,10 +1192,10 @@ describe("timeline CLI rendering snapshots", () => {
 
     expect(rootTurn).toBeDefined();
     expect(delegation).toBeDefined();
-    expect(delegation?.childRows.some((row) => row.kind === "turn")).toBe(
+    expect(delegation?.childRows?.some((row) => row.kind === "turn")).toBe(
       false,
     );
-    expect(delegation?.childRows.length ?? 0).toBeGreaterThan(0);
+    expect(delegation?.childRows?.length ?? 0).toBeGreaterThan(0);
     for (const childRow of delegation?.childRows ?? []) {
       expect(childRow.id.startsWith(`${delegation?.id}:child:`)).toBe(true);
     }
@@ -1299,7 +1291,7 @@ describe("timeline CLI rendering snapshots", () => {
     );
     expect(
       delegations.some((delegation) =>
-        delegation.childRows.some((row) => row.kind === "turn"),
+        delegation.childRows?.some((row) => row.kind === "turn"),
       ),
     ).toBe(false);
   });
@@ -1486,7 +1478,7 @@ describe("timeline CLI rendering snapshots", () => {
         }),
       ]),
     );
-    expect(delegation?.childRows.some((row) => row.turnId === "turn-2")).toBe(
+    expect(delegation?.childRows?.some((row) => row.turnId === "turn-2")).toBe(
       false,
     );
     expect(rootFollowUp).toMatchObject({
@@ -1751,7 +1743,7 @@ describe("timeline CLI rendering snapshots", () => {
       ]),
     );
     expect(
-      delegation?.childRows.some((row) => row.turnId === "follow-up-turn"),
+      delegation?.childRows?.some((row) => row.turnId === "follow-up-turn"),
     ).toBe(false);
     expect(rootFollowUp).toMatchObject({
       kind: "conversation",
@@ -1852,7 +1844,7 @@ describe("timeline CLI rendering snapshots", () => {
       ]),
     );
     expect(
-      delegation?.childRows.some((row) => row.turnId === "follow-up-turn"),
+      delegation?.childRows?.some((row) => row.turnId === "follow-up-turn"),
     ).toBe(false);
     expect(rootFollowUp).toMatchObject({
       kind: "conversation",
@@ -2013,7 +2005,7 @@ describe("timeline CLI rendering snapshots", () => {
         }),
       ]),
     );
-    expect(delegation?.childRows.some((row) => row.turnId === "turn-2")).toBe(
+    expect(delegation?.childRows?.some((row) => row.turnId === "turn-2")).toBe(
       false,
     );
     expect(rootFollowUp).toMatchObject({
@@ -2061,10 +2053,10 @@ describe("timeline CLI rendering snapshots", () => {
 
     expect(delegation).toBeDefined();
     expect(delegation?.status).toBe("pending");
-    expect(delegation?.childRows.some((row) => row.kind === "turn")).toBe(
+    expect(delegation?.childRows?.some((row) => row.kind === "turn")).toBe(
       false,
     );
-    expect(delegation?.childRows.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(delegation?.childRows?.length ?? 0).toBeGreaterThanOrEqual(3);
     expect(timeline.text).not.toContain("Worked for");
     expect(timeline.text).not.toContain("Working for");
   });
@@ -2262,6 +2254,7 @@ describe("timeline CLI rendering snapshots", () => {
       {
         kind: "operation",
         id: "thread-1:op:reasoning:kind:reasoning|turn:turn-1|parent:root|item:reasoning-1",
+        sourceEvent: { seq: 2, part: 0 },
         threadId: "thread-1",
         sourceSeqStart: 2,
         sourceSeqEnd: 4,
@@ -2610,6 +2603,51 @@ describe("timeline CLI rendering snapshots", () => {
     expect(timeline.text).toContain("Ran web search: React suspense docs");
     expect(timeline.text).toContain(
       "Edited /repo/packages/core-ui/src/timeline.ts +1 -1",
+    );
+  });
+
+  it("prints a plan in dependency order with positions and prerequisites in the verbose timeline", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const timeline = renderActiveTimeline([
+      event.turnStarted(),
+      event.planStepsCompleted({
+        steps: [
+          {
+            id: "verify",
+            step: "Verify both",
+            status: "pending",
+            needs: ["card", "fold"],
+          },
+          {
+            id: "card",
+            step: "Update the card",
+            status: "active",
+            needs: ["contract"],
+          },
+          {
+            id: "contract",
+            step: "Read the contract",
+            status: "completed",
+            needs: [],
+          },
+          {
+            id: "fold",
+            step: "Update the fold",
+            status: "failed",
+            needs: ["contract"],
+          },
+        ],
+      }),
+    ]);
+
+    expect(timeline.text).toContain(
+      [
+        "  Ordered by dependencies.",
+        "  [x] 1. Read the contract",
+        "  [>] 2. Update the card (after 1)",
+        "  [!] 3. Update the fold (after 1)",
+        "  [ ] 4. Verify both (after 2, 3)",
+      ].join("\n"),
     );
   });
 

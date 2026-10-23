@@ -4,12 +4,15 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@bb/shared-ui/lib/utils";
-import { useCloseMobileSidebar } from "@/components/ui/sidebar.js";
+import {
+  useCloseMobileSidebar,
+  useIsSidebarFramed,
+} from "@/components/ui/sidebar.js";
 import {
   CHROME_ROW_CLASS,
   getBbDesktopInfo,
+  MACOS_CHROME_CONTROL_AXIS_CLASS,
   MACOS_CHROME_CONTROL_NO_DRAG_CLASS,
-  MACOS_NAV_RAIL_TRAFFIC_LIGHT_ROW_HEIGHT_CLASS,
   MACOS_WINDOW_DRAG_CLASS,
   shouldReserveMacosTrafficLights,
   shouldUseMacosDesktopChrome,
@@ -17,47 +20,28 @@ import {
 import { useDesktopWindowState } from "@/hooks/useDesktopWindowState";
 import { SidebarHistoryNavigationControls } from "./SidebarHistoryNavigationControls";
 
-const BROWSER_HEADER_SLOT_START_CLASS =
-  "pl-[calc(env(safe-area-inset-left)_+_12px_+_var(--bb-sidebar-control-size)_-_4px)]";
-const MACOS_TRAFFIC_LIGHT_HEADER_SLOT_START_CLASS =
-  "pl-[calc(84px_+_var(--bb-sidebar-control-size)_-_4px)]";
+const FRAMED_CARD_TOP_BORDER_OFFSET_CLASS = "-mt-px";
 
-export const NAV_RAIL_WIDTH_CLASS =
-  "w-[calc(var(--bb-sidebar-control-size)_+_24px)]";
-const NAV_RAIL_HEADER_SLOT_START_CLASS = "pl-0";
-
-export function NavRailMacosTrafficLightRow() {
+export function useSidebarHeaderControlAxisClass(): string | undefined {
+  const isFramed = useIsSidebarFramed();
   const [desktopInfo] = useState(getBbDesktopInfo);
-  const desktopWindowState = useDesktopWindowState();
-  const reserveMacosTrafficLights = shouldReserveMacosTrafficLights({
-    desktopInfo,
-    windowState: desktopWindowState,
-  });
-  if (!reserveMacosTrafficLights) return null;
-
-  return (
-    <div
-      aria-hidden="true"
-      data-testid="nav-rail-macos-traffic-light-row"
-      className={cn(
-        MACOS_NAV_RAIL_TRAFFIC_LIGHT_ROW_HEIGHT_CLASS,
-        "shrink-0",
-        MACOS_WINDOW_DRAG_CLASS,
-      )}
-    />
-  );
+  return shouldUseMacosDesktopChrome(desktopInfo) && !isFramed
+    ? MACOS_CHROME_CONTROL_AXIS_CLASS
+    : undefined;
 }
+
+export const MACOS_DRAWER_HEADER_RESERVE_CLASS =
+  "pl-[calc(var(--bb-macos-traffic-light-reserve,84px)_+_32px_-_var(--bb-sidebar-control-size)_-_2_*_var(--bb-sidebar-rail-padding))]";
 
 export function SidebarTopReserveRow({
   testId,
-  renderHeaderSlot,
-  besideNavRail = false,
+  headerSlot,
 }: {
   testId: string;
-  renderHeaderSlot?: (startInsetClassName: string) => ReactNode;
-  besideNavRail?: boolean;
+  headerSlot?: ReactNode;
 }) {
   const closeOnMobile = useCloseMobileSidebar();
+  const isFramed = useIsSidebarFramed();
   const [desktopInfo] = useState(getBbDesktopInfo);
   const desktopWindowState = useDesktopWindowState();
   const usesDesktopChrome = shouldUseMacosDesktopChrome(desktopInfo);
@@ -66,29 +50,33 @@ export function SidebarTopReserveRow({
     windowState: desktopWindowState,
   });
 
+  if (isFramed && headerSlot === undefined) {
+    return <div data-testid={testId} className="h-2 shrink-0" />;
+  }
+
   return (
     <div
       data-testid={testId}
       className={cn(
         CHROME_ROW_CLASS,
         "shrink-0 justify-end gap-1 px-2",
-        usesDesktopChrome && MACOS_WINDOW_DRAG_CLASS,
+        isFramed && FRAMED_CARD_TOP_BORDER_OFFSET_CLASS,
+        usesDesktopChrome && !isFramed && MACOS_WINDOW_DRAG_CLASS,
+        reserveMacosTrafficLights &&
+          !isFramed &&
+          MACOS_DRAWER_HEADER_RESERVE_CLASS,
       )}
     >
-      {renderHeaderSlot?.(
-        besideNavRail
-          ? NAV_RAIL_HEADER_SLOT_START_CLASS
-          : reserveMacosTrafficLights
-            ? MACOS_TRAFFIC_LIGHT_HEADER_SLOT_START_CLASS
-            : BROWSER_HEADER_SLOT_START_CLASS,
+      {headerSlot}
+      {isFramed ? null : (
+        <SidebarHistoryNavigationControls
+          onNavigate={closeOnMobile}
+          className={cn(
+            "shrink-0",
+            usesDesktopChrome && MACOS_CHROME_CONTROL_NO_DRAG_CLASS,
+          )}
+        />
       )}
-      <SidebarHistoryNavigationControls
-        onNavigate={closeOnMobile}
-        className={cn(
-          "shrink-0",
-          usesDesktopChrome && MACOS_CHROME_CONTROL_NO_DRAG_CLASS,
-        )}
-      />
     </div>
   );
 }

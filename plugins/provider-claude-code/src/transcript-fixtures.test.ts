@@ -269,6 +269,33 @@ describe("claude transcript fixtures", () => {
     });
   });
 
+  it("carries Claude task ids and blockers into the latest plan snapshot", () => {
+    const plans = runs
+      .get("task-plan-model-fallback.ndjson")!
+      .events.flatMap((event) =>
+        event.type === "item/completed" && event.item.type === "planSteps"
+          ? [event.item.steps]
+          : [],
+      );
+    expect(
+      plans.at(-1)?.map(({ id, needs }) => `${id}<${needs?.join(",")}`),
+    ).toEqual([
+      "1<",
+      "2<",
+      "3<",
+      "4<",
+      "5<4",
+      "6<4",
+      "7<4,6",
+      "8<",
+      "9<4,5,2",
+      "10<4,9,1",
+      "11<4,9,8",
+      "12<4,9,1",
+      "13<5,6,7,9,10,11,12",
+    ]);
+  });
+
   it("matches the pinned projection (UPDATE_TRANSCRIPT_EXPECTATIONS=1 to rewrite)", () => {
     const actual = Object.fromEntries(
       fixtureNames.map((name) => [name, projection(runs.get(name)!)]),

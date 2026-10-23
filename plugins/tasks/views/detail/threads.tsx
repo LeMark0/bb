@@ -19,7 +19,10 @@ import {
   isActiveThread,
 } from "./meta.js";
 import { PresetDialog, savePresetDraft } from "../manage/preset-dialog.js";
-import { ConfirmDialog } from "../../components/confirm-dialog.js";
+import {
+  ConfirmDeleteDialog,
+  ConfirmDeleteDialogContent,
+} from "@/components/ui/confirm-delete-dialog";
 import { useTasksRpc } from "../../shell/data.js";
 import type { LiveThreads } from "./live-threads.js";
 import type { MainThreadState } from "./main-thread.js";
@@ -538,25 +541,31 @@ export function ThreadsSection({
       <div aria-live="polite" className="sr-only">
         {announcement}
       </div>
-      <ConfirmDialog
+      <ConfirmDeleteDialog
+        className="max-w-sm"
         open={confirm !== null}
         onOpenChange={(open) => {
           if (!open) setConfirm(null);
         }}
-        title="Detach thread?"
-        description={
-          confirm
-            ? [
-                `"${titleOf(confirm)}" will no longer be listed on this task. The thread itself is not deleted; re-attach it with bb tasks attach.`,
-                ...(confirm.isMain ? [MAIN_DETACH_WARNING] : []),
-              ].join(" ")
-            : ""
-        }
-        confirmLabel="Detach"
-        onConfirm={() => {
-          if (confirm) void runPending(confirm, onDetach);
-        }}
-      />
+      >
+        {confirm ? (
+          <ConfirmDeleteDialogContent
+            title="Detach thread?"
+            description={[
+              `"${titleOf(confirm)}" will no longer be listed on this task. The thread itself is not deleted; re-attach it with bb tasks attach.`,
+              ...(confirm.isMain ? [MAIN_DETACH_WARNING] : []),
+            ].join(" ")}
+            confirmLabel="Detach"
+            pending={false}
+            size="sm"
+            onCancel={() => setConfirm(null)}
+            onConfirm={() => {
+              setConfirm(null);
+              void runPending(confirm, onDetach);
+            }}
+          />
+        ) : null}
+      </ConfirmDeleteDialog>
     </section>
   );
 }

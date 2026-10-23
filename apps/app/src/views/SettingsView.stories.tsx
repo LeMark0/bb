@@ -1,4 +1,5 @@
 import { MobileAppSection } from "@/components/settings/MobileAppSection";
+import { CliCommandSettingsSectionContent } from "@/components/settings/CliCommandSettingsSection";
 import { CliSkillsSettingsSectionContent } from "@/components/settings/CliSkillsSettingsSection";
 import { useEffect, useRef, useState } from "react";
 import { Route, Routes, useNavigate } from "react-router-dom";
@@ -15,8 +16,10 @@ import type {
   WorkspaceOpenTargetId,
 } from "@bb/host-daemon-contract";
 import { VoiceInputSettingsSectionContent } from "@/components/settings/VoiceInputSettingsSection";
+import { AiServicesSettingsSection } from "@/components/settings/AiServicesSettingsSection";
 import { ArchivedThreadsSettingsSection } from "@/components/settings/ArchivedThreadsSettingsSection";
 import { CommunitySettingsSection } from "@/components/settings/CommunitySettingsSection";
+import { FileOpenersSettingsSection } from "@/components/settings/FileOpenersSettingsSection";
 import { KeyboardSettingsSection } from "@/components/settings/KeyboardSettingsSection";
 import { MarketplacesSettingsSection } from "@/components/settings/MarketplacesSettingsSection";
 import { MachineEnvironmentSettings } from "@/components/settings/MachineEnvironmentSettings";
@@ -122,6 +125,8 @@ function useSettingsStoryState() {
   const [steerActiveThreadOnEnter, setSteerActiveThreadOnEnter] =
     useState(false);
   const [confirmThreadArchive, setConfirmThreadArchive] = useState(true);
+  const [keepHistoryAfterContextClear, setKeepHistoryAfterContextClear] =
+    useState(false);
   const [showGitChanges, setShowGitChanges] = useState(true);
   const [streamerMode, setStreamerMode] = useState(false);
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
@@ -150,6 +155,8 @@ function useSettingsStoryState() {
     setShowGitChanges,
     confirmThreadArchive,
     setConfirmThreadArchive,
+    keepHistoryAfterContextClear,
+    setKeepHistoryAfterContextClear,
     streamerMode,
     telemetryEnabled,
     setTelemetryEnabled,
@@ -199,6 +206,10 @@ function GeneralSettingsStory({
         onShowGitChangesChange={state.setShowGitChanges}
         confirmThreadArchive={state.confirmThreadArchive}
         onConfirmThreadArchiveChange={state.setConfirmThreadArchive}
+        keepHistoryAfterContextClear={state.keepHistoryAfterContextClear}
+        onKeepHistoryAfterContextClearChange={
+          state.setKeepHistoryAfterContextClear
+        }
         desktopBrowserAvailable={desktopBrowserAvailable}
         generalSettingsDisabled={false}
         managedBranchPrefix={state.managedBranchPrefix}
@@ -208,11 +219,22 @@ function GeneralSettingsStory({
           state.setNavigateToThreadAfterCreate
         }
         onOpenLinksInAppBrowserChange={state.setOpenLinksInAppBrowser}
+        onReplaySetupGuide={() => {}}
         onRewriteLocalhostLinksChange={state.setRewriteLocalhostLinks}
         onSteerActiveThreadOnEnterChange={state.setSteerActiveThreadOnEnter}
         openLinksInAppBrowser={state.openLinksInAppBrowser}
         rewriteLocalhostLinks={state.rewriteLocalhostLinks}
         steerActiveThreadOnEnter={state.steerActiveThreadOnEnter}
+      />
+      <CliCommandSettingsSectionContent
+        onChange={() => {}}
+        pending={false}
+        status={{
+          installedPath: null,
+          onPath: false,
+          shadowedBy: null,
+          supported: true,
+        }}
       />
       <CliSkillsSettingsSectionContent
         hasConnectedMachine={false}
@@ -244,7 +266,6 @@ function AppearanceSettingsStory() {
       customThemes={["Monochrome Lab", "Low Contrast"]}
       pluginThemes={[]}
       faviconColor={state.appearance.faviconColor}
-      navigationRail={false}
       onAppearanceThemeChange={(themeId) =>
         state.setAppearance((current) => ({ ...current, themeId }))
       }
@@ -272,16 +293,19 @@ function FilePreferencesStory() {
   }
 
   return (
-    <LocalOpenTargetSettingsSection
-      accessState="available"
-      directoryTargetId={state.directoryTargetId}
-      fileTargetId={state.fileTargetId}
-      hasDaemon={true}
-      onDirectoryTargetChange={handleDirectoryTargetChange}
-      onFileTargetChange={handleFileTargetChange}
-      onRequestAccess={async () => true}
-      targets={connectedTargets}
-    />
+    <>
+      <LocalOpenTargetSettingsSection
+        accessState="available"
+        directoryTargetId={state.directoryTargetId}
+        fileTargetId={state.fileTargetId}
+        hasDaemon={true}
+        onDirectoryTargetChange={handleDirectoryTargetChange}
+        onFileTargetChange={handleFileTargetChange}
+        onRequestAccess={async () => true}
+        targets={connectedTargets}
+      />
+      <FileOpenersSettingsSection />
+    </>
   );
 }
 
@@ -307,7 +331,9 @@ function ProvidersSettingsStory() {
     <ProvidersSettingsSection
       disabled={false}
       generalSettings={generalSettings}
-      onGeneralSettingsChange={setGeneralSettings}
+      onGeneralSettingsChange={(patch) =>
+        setGeneralSettings((current) => ({ ...current, ...patch }))
+      }
     />
   );
 }
@@ -337,6 +363,8 @@ function SettingsStoryContent({ route }: { route: SettingsStoryRoute }) {
   switch (route.id) {
     case "providers":
       return <ProvidersSettingsStory />;
+    case "ai-services":
+      return <AiServicesSettingsSection />;
     case "appearance":
       return <AppearanceSettingsStory />;
     case "keyboard":

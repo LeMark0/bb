@@ -14,32 +14,15 @@ import type {
 } from "@bb/shared-ui/question-form-state";
 import { ThreadQuestionFormHost } from "./ThreadQuestionFormHost";
 import { AppCommandProvider } from "@/components/commands/AppCommandProvider";
-import { defaultAppSettings } from "@bb/domain";
 type InteractionPayload = { questions: Question[] };
 type InteractionResponse = { answers: Record<string, QuestionAnswer> };
 
 vi.mock("@/hooks/useVoiceInput", () => ({ useVoiceInput: vi.fn() }));
 
-vi.mock("@/hooks/queries/system-queries", () => ({
-  useSystemConfig: () => ({
-    data: {
-      generalSettings: { ...defaultAppSettings },
-      keybindings: [1, 2, 3].map((digit) => ({
-        command: `question.select.${digit}`,
-        desktopOnly: false,
-        shortcut: {
-          key: String(digit),
-          mod: false,
-          meta: false,
-          control: false,
-          alt: false,
-          shift: false,
-        },
-        when: { all: ["questionOpen"], none: [] },
-      })),
-    },
-  }),
-}));
+vi.mock(
+  "@/hooks/queries/system-queries",
+  () => import("@/test/question-shortcuts-system-queries-mock"),
+);
 vi.mock("@/lib/bb-desktop", () => ({ getBbDesktopInfo: () => null }));
 const pane = vi.hoisted(() => ({ isFocused: true }));
 vi.mock("@/views/thread-detail/PaneContext", () => ({
@@ -109,11 +92,18 @@ function render(
     submit?: (value: InteractionResponse) => Promise<void>;
     cancel?: () => Promise<void>;
     draftKey?: string;
+    density?: "default" | "compact";
+    promptShownAbove?: string;
+    closeInline?: () => void;
   } = {},
 ) {
   return renderReact(
     <AppCommandProvider>
-      <ThreadQuestionFormHost>
+      <ThreadQuestionFormHost
+        density={handlers.density ?? "default"}
+        promptShownAbove={handlers.promptShownAbove ?? null}
+        closeInline={handlers.closeInline ?? null}
+      >
         <QuestionForm
           draftKey={handlers.draftKey}
           questions={payload.questions}
@@ -257,6 +247,43 @@ describe("answering a single-select question", () => {
     expect(submit).not.toHaveBeenCalled();
     fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
     expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the compact labels when the host is compact", () => {
+    const slot = render(singleSelect, { density: "compact" });
+    expect(getButtonByText(slot, "Submit")).toBeTruthy();
+    expect(slot.queryByText("Submit answer")).toBeNull();
+  });
+
+  it("closes the inline form on Cancel without cancelling the question", () => {
+    const cancel = vi.fn(async () => undefined);
+    const closeInline = vi.fn();
+    const slot = render(singleSelect, {
+      density: "compact",
+      cancel,
+      closeInline,
+    });
+
+    fireEvent.click(getButtonByText(slot, "Cancel"));
+
+    expect(closeInline).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("hides the compact prompt only when the host already shows that text", () => {
+    const prompt = "Which database should we use?";
+    const shownAbove = render(singleSelect, {
+      density: "compact",
+      promptShownAbove: prompt,
+    });
+    expect(shownAbove.getAllByText(prompt)).toHaveLength(1);
+    cleanup();
+
+    const labelAbove = render(singleSelect, {
+      density: "compact",
+      promptShownAbove: "Database",
+    });
+    expect(labelAbove.getAllByText(prompt)).toHaveLength(2);
   });
 
   it("submits the selected option value", () => {
@@ -471,6 +498,33 @@ describe("multi-select and multi-question flows", () => {
       } finally {
         if (original === null) window.localStorage.removeItem(storageKey);
         else window.localStorage.setItem(storageKey, original);
+      }
+    },
+  );
+
+  it.each(["submit", "cancel"] as const)(
+    "keeps answers on screen and locks the form after a successful %s",
+    async (action) => {
+      const draftKey = `thr_draft:pint_settled_${action}`;
+      const storageKey = `bb.question-draft.v1:${draftKey}`;
+      try {
+        const slot = render(singleSelect, {
+          draftKey,
+          [action]: async () => {},
+        });
+        fireEvent.click(getButtonByText(slot, "SQLite"));
+        const buttonLabel = action === "submit" ? "Submit answer" : "Cancel";
+        await act(async () =>
+          fireEvent.click(getButtonByText(slot, buttonLabel)),
+        );
+        expect(window.localStorage.getItem(storageKey)).toBeNull();
+        expect(
+          getButtonByText(slot, "SQLite").getAttribute("aria-pressed"),
+        ).toBe("true");
+        expect(getButtonByText(slot, "Submit answer").disabled).toBe(true);
+        expect(getButtonByText(slot, "Cancel").disabled).toBe(true);
+      } finally {
+        window.localStorage.removeItem(storageKey);
       }
     },
   );

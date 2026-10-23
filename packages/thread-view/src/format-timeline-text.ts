@@ -6,6 +6,11 @@ import type {
 import { displayWidth } from "@bb/text-utils";
 import { assertNever } from "./assert-never.js";
 import {
+  formatPlanStepLine,
+  orderPlanSteps,
+  PLAN_STEP_ORDER_CAPTION,
+} from "./plan-step-order.js";
+import {
   buildTimelineWorkSummaryLabel,
   buildTimelineViewRows,
 } from "./timeline-view.js";
@@ -232,7 +237,11 @@ function formatWorkBody(
       return lines;
     case "plan-steps":
       if (context.verbose) {
-        for (const step of row.steps) {
+        const plan = orderPlanSteps(row.steps);
+        lines.push(
+          dim(`  ${PLAN_STEP_ORDER_CAPTION[plan.order]}`, context.color),
+        );
+        for (const { step, text, position, after } of plan.steps) {
           const marker =
             step.status === "completed"
               ? "[x]"
@@ -241,7 +250,12 @@ function formatWorkBody(
                 : step.status === "failed"
                   ? "[!]"
                   : "[ ]";
-          lines.push(dim(`  ${marker} ${step.step}`, context.color));
+          lines.push(
+            dim(
+              `  ${marker} ${formatPlanStepLine({ order: plan.order, position, after, text })}`,
+              context.color,
+            ),
+          );
         }
       }
       return lines;
@@ -258,7 +272,7 @@ function formatWorkBody(
     case "workflow":
       return lines;
     case "delegation":
-      if (row.childRows.length > 0) {
+      if (row.childRows !== null && row.childRows.length > 0) {
         lines.push(
           indentBlock(
             formatRows(row.childRows, nestedContext(context, row.childRows)),

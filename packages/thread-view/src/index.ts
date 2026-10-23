@@ -53,6 +53,22 @@ export {
 } from "./build-thread-timeline.js";
 export { extractThreadTimelineActivePlanTurn } from "./active-prompt-mode-extraction.js";
 export { extractThreadTimelineGoal } from "./goal-snapshot-extraction.js";
+export {
+  describePlanStep,
+  formatPlanStepAfter,
+  formatPlanStepLine,
+  orderPlanSteps,
+  PLAN_STEP_ORDER_CAPTION,
+} from "./plan-step-order.js";
+export type {
+  OrderedPlanStep,
+  PlanStepOrder,
+  PlanStepStatusPhrase,
+} from "./plan-step-order.js";
+export {
+  extractThreadProviderCommands,
+  extractThreadSessionOptions,
+} from "./provider-state-extraction.js";
 export type { AcceptedClientRequestContext } from "./accepted-client-request-context.js";
 export {
   buildTimelineViewRows,
@@ -62,6 +78,7 @@ export type {
   BuildTimelineViewRowsOptions,
   ThreadTimelineViewRow,
   TimelineQuestionViewWorkRow,
+  TimelineViewDelegationWorkRow,
   TimelineViewTurnRow,
   TimelineViewWorkflowWorkRow,
   TimelineViewWorkRow,

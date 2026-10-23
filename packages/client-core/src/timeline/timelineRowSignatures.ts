@@ -198,7 +198,14 @@ function timelineWorkRowRenderSignature(row: TimelineViewWorkRow): string {
         row.explanation,
         row.completedAt,
         row.steps
-          .map((step) => joinSignatureParts([step.step, step.status ?? null]))
+          .map((step) =>
+            joinSignatureParts([
+              step.step,
+              step.status ?? null,
+              step.id ?? null,
+              step.needs === undefined ? null : JSON.stringify(step.needs),
+            ]),
+          )
           .join("\u001e"),
       ]);
     case "extension":
@@ -219,7 +226,9 @@ function timelineWorkRowRenderSignature(row: TimelineViewWorkRow): string {
         row.subagentType,
         row.description,
         row.completedAt,
-        timelineRowsSignature(row.childRows),
+        row.childRows === null
+          ? "deferred"
+          : timelineRowsSignature(row.childRows),
       ]);
     case "workflow":
       return joinSignatureParts([

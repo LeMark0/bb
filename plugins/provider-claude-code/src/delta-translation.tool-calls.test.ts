@@ -46,6 +46,77 @@ describe("claude tool-use translation (delta path)", () => {
     expect(harness.itemId("tool-1")).toMatch(ITEM_ID_PATTERN);
   });
 
+  it("titles a Bash command by its description and keeps the command as detail", () => {
+    const harness = createClaudeDeltaHarness();
+    const events = harness.translate({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "Bash",
+            input: {
+              command: "rg -n zod package.json",
+              description: "Check the zod version",
+            },
+          },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "item/started",
+        item: expect.objectContaining({
+          type: "commandExecution",
+          command: "rg -n zod package.json",
+          presentation: {
+            label: { pending: "Running command", completed: "Ran command" },
+            icon: { glyph: "Terminal" },
+            title: "Check the zod version",
+            detail: "rg -n zod package.json",
+          },
+        }),
+      }),
+    );
+  });
+
+  it("titles a Bash command by the command when the description is blank", () => {
+    const harness = createClaudeDeltaHarness();
+    const events = harness.translate({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "Bash",
+            input: { command: "ls -la", description: "   " },
+          },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "item/started",
+        item: expect.objectContaining({
+          type: "commandExecution",
+          presentation: {
+            label: { pending: "Running command", completed: "Ran command" },
+            icon: { glyph: "Terminal" },
+            title: "ls -la",
+          },
+        }),
+      }),
+    );
+  });
+
   it("falls back to a generic tool call when Bash args are malformed", () => {
     const harness = createClaudeDeltaHarness();
     harness.translate({
@@ -807,7 +878,7 @@ describe("claude tool-result translation (delta path)", () => {
         type: "item/completed",
         item: expect.objectContaining({
           type: "planSteps",
-          steps: [{ step: "Review", status: "active" }],
+          steps: [{ step: "Review", status: "active", id: "1" }],
         }),
       }),
     );

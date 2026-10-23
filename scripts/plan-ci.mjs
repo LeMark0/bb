@@ -11,8 +11,18 @@ const { values } = parseArgs({
 });
 const shards = JSON.parse(readFileSync("scripts/ci-test-shards.json", "utf8"));
 const full = {
-  tests: { include: shards.tests },
-  "windows-tests": { include: shards["windows-tests"] },
+  tests: {
+    include: shards.tests.map((entry) => ({
+      ...entry,
+      mobile: matchesFilter("@bb/mobile", entry.filter),
+    })),
+  },
+  "windows-tests": {
+    include: shards["windows-tests"].map((entry) => ({
+      ...entry,
+      mobile: matchesFilter("@bb/mobile", entry.filter),
+    })),
+  },
   foundation: true,
   packaging: true,
   providers: true,
@@ -59,6 +69,29 @@ function select() {
   )
     .split("\0")
     .filter(Boolean);
+  if (
+    paths.length > 0 &&
+    paths.every((path) =>
+      /^docs\/(?:ci-performance|windows-ci|debugging-and-qa|filing-issues|cli-guide-and-skill)\.md$/u.test(
+        path,
+      ),
+    )
+  ) {
+    return {
+      ...full,
+      tests: { include: [] },
+      "windows-tests": { include: [] },
+      foundation: false,
+      packaging: false,
+      providers: false,
+      forks: false,
+      buildNeeded: false,
+      staticNeeded: false,
+      appBuild: false,
+      sdkBuild: false,
+      reason: "CI and contributor documentation only",
+    };
+  }
   const known = /^(?:apps|packages|plugins|examples\/plugins|tests)\//u;
   if (paths.some((path) => !known.test(path))) return full;
   const result = JSON.parse(readFileSync(values.affected, "utf8"));
@@ -118,6 +151,7 @@ function select() {
         : [
             {
               ...entry,
+              mobile: selected.includes("@bb/mobile"),
               filter: selected
                 .sort()
                 .map((name) => `--filter=${name}`)
