@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type {
   ExperimentalPluginProviderLineageEntry,
@@ -5,6 +6,14 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import codexPlugin from "../server.js";
+
+const declaredIconNames = Object.keys(
+  (
+    JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { bb: { branding: { experimental_icons?: Record<string, string> } } }
+  ).bb.branding.experimental_icons ?? {},
+);
 
 const COORDINATOR_THREAD_ID = "thr_coordinatr1";
 const WORKER_THREAD_ID = "thr_reviewer01";
@@ -51,7 +60,10 @@ function sideChat(threadId: string): ExperimentalPluginProviderLineageEntry {
 }
 
 function loadCodexPlugin() {
-  const host = createFakePluginHost({ pluginId: "provider-codex" });
+  const host = createFakePluginHost({
+    pluginId: "provider-codex",
+    experimental_declaredIconNames: declaredIconNames,
+  });
   codexPlugin(host.bb);
   const declaration = host.harness.registrations.providerRegistrations.find(
     (entry) => entry.id === "codex",

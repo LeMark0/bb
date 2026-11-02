@@ -287,6 +287,30 @@ describe("TaskAttachments upload", () => {
     expect(document.activeElement).toBe(attach);
   });
 
+  it("should drop the reveal when the list is collapsed before the uploaded row arrives", async () => {
+    const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+    const props = baseProps({
+      attachments: existing,
+      onUpload: vi.fn().mockResolvedValue(uploaded.map((entry) => entry.id)),
+    });
+    const screen = render(<TaskAttachments {...props} />);
+
+    pickFiles(screen);
+    await waitFor(() =>
+      expect(trigger(screen).getAttribute("aria-expanded")).toBe("true"),
+    );
+    fireEvent.click(trigger(screen));
+    await act(async () => {
+      screen.rerender(
+        <TaskAttachments {...props} attachments={[...existing, ...uploaded]} />,
+      );
+    });
+    fireEvent.click(trigger(screen));
+
+    expect(screen.getByTitle("new-1.md")).toBeDefined();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
   it("should not scroll after a failed upload or a background change", async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
     const props = baseProps({

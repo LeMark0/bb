@@ -4,10 +4,11 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as renderReact,
   screen,
   waitFor,
 } from "@testing-library/react";
+import { makeThreadListEntry } from "@bb/test-helpers/domain-fixtures";
 import { defaultAppSettings } from "@bb/domain";
 import { Popover, PopoverContent, PopoverTrigger } from "@bb/shared-ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@bb/shared-ui/tooltip";
@@ -26,6 +27,12 @@ import { AppLayout } from "./AppLayout";
 import { CompactViewportOverrideProvider } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { setCompactSecondaryPanelPresentation } from "@/components/ui/secondary-panel-shelf-visibility";
 
+import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
+
+function render(ui: ReactNode) {
+  return renderReact(ui, { wrapper: createQueryClientTestHarness().wrapper });
+}
+
 const useThreadDetailBootstrapMock = vi.hoisted(() =>
   vi.fn(
     (): {
@@ -35,6 +42,11 @@ const useThreadDetailBootstrapMock = vi.hoisted(() =>
     } => ({ isError: false, isSuccess: false }),
   ),
 );
+
+const sidebarThreadsMock = vi.hoisted(() => {
+  const threads: import("@bb/domain").ThreadListEntry[] = [];
+  return { threads };
+});
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "bb.sidebar.width";
 const SIDEBAR_OPEN_STORAGE_KEY = "bb.sidebar.open";
@@ -123,6 +135,9 @@ vi.mock("@/lib/bb-desktop", () => ({
   DEFAULT_DESKTOP_WINDOW_STATE: { isFullScreen: false },
   MACOS_CHROME_CONTROL_AXIS_CLASS: "",
   MACOS_CHROME_CONTROL_NO_DRAG_CLASS: "",
+  MACOS_TITLE_BAR_CONTROL_AXIS_CLASS: "",
+  MACOS_TITLE_BAR_CONTROL_SIZE_CLASS: "",
+  MACOS_TITLE_BAR_PINNED_TOGGLE_CLASS: "",
   MACOS_TRAFFIC_LIGHT_RESERVE_OFFSET_CLASS: "",
   MACOS_TRAFFIC_LIGHT_RESERVE_PADDING_CLASS: "",
   MACOS_WINDOW_DRAG_CLASS: "",
@@ -159,7 +174,7 @@ vi.mock("@/hooks/queries/sidebar-navigation-query", () => ({
         kind: "personal",
         name: "Personal",
         sources: [],
-        threads: [],
+        threads: sidebarThreadsMock.threads,
         defaultExecutionOptions: null,
         createdAt: 1,
         updatedAt: 1,
@@ -172,6 +187,7 @@ vi.mock("@/hooks/queries/sidebar-navigation-query", () => ({
 }));
 
 vi.mock("@/hooks/queries/thread-queries", () => ({
+  useArchivedThreads: () => ({ data: undefined }),
   didThreadDetailBootstrapRefreshAfterMount: () => true,
   useThread: () => ({ data: undefined }),
   useThreadDetailBootstrap: useThreadDetailBootstrapMock,
@@ -221,6 +237,7 @@ function renderLayout(initialPath = "/", children: ReactNode = null) {
 }
 
 beforeEach(() => {
+  sidebarThreadsMock.threads = [];
   window.localStorage.clear();
   window.sessionStorage.clear();
   useThreadDetailBootstrapMock.mockReset();
@@ -236,6 +253,7 @@ afterEach(() => {
   resetAllCrashedPluginSlotsForTest();
   setCompactSecondaryPanelPresentation("closed");
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
@@ -621,4 +639,43 @@ describe("AppLayout plugin overlay contexts", () => {
       expect(warnings).not.toHaveBeenCalled();
     },
   );
+});
+
+it("synchronizes desktop attention when sidebar state changes and clears its report on unmount", async () => {
+  const setAttentionThreads = vi.fn();
+  vi.stubGlobal("bbDesktop", { setAttentionThreads });
+  sidebarThreadsMock.threads = [
+    makeThreadListEntry({
+      id: "unread",
+      lastReadAt: 10,
+      latestAttentionAt: 20,
+    }),
+  ];
+  const view = renderLayout();
+  await waitFor(() =>
+    expect(setAttentionThreads).toHaveBeenLastCalledWith({
+      pendingThreadIds: [],
+      unreadThreadIds: ["unread"],
+    }),
+  );
+  sidebarThreadsMock.threads = [
+    makeThreadListEntry({
+      id: "pending",
+      lastReadAt: 30,
+      latestAttentionAt: 20,
+      hasPendingInteraction: true,
+    }),
+  ];
+  fireEvent.click(screen.getByRole("link", { name: SETTINGS_ROUTE }));
+  await waitFor(() =>
+    expect(setAttentionThreads).toHaveBeenLastCalledWith({
+      pendingThreadIds: ["pending"],
+      unreadThreadIds: [],
+    }),
+  );
+  view.unmount();
+  expect(setAttentionThreads).toHaveBeenLastCalledWith({
+    pendingThreadIds: [],
+    unreadThreadIds: [],
+  });
 });

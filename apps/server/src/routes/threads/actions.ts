@@ -24,11 +24,7 @@ import {
   type PublicApiSchema,
 } from "@bb/server-contract";
 import type { Hono } from "hono";
-import {
-  createStandaloneBuiltinCompactCommandInput,
-  type Thread,
-  type ThreadQueuedMessage,
-} from "@bb/domain";
+import { type ThreadQueuedMessage } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import { ApiError } from "../../errors.js";
 import {
@@ -37,13 +33,17 @@ import {
 } from "../../services/plugins/plugin-thread-events.js";
 import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
 import { retryFailedTurn } from "../../services/threads/turn-retry.js";
+import { regenerateThreadTitle } from "../../services/threads/title-generation.js";
 import {
   requireConnectedHostSession,
   requirePublicThread,
 } from "../../services/lib/entity-lookup.js";
 import { parseSafeRelativeRoutePath } from "../relative-route-path.js";
 import { resolvePromptAttachmentReferences } from "../../services/projects/attachments.js";
-import { threadTargetHostId } from "../../services/threads/dispatch-attempt.js";
+import {
+  compactThreadContext,
+  threadTargetHostId,
+} from "../../services/threads/dispatch-attempt.js";
 import {
   createQueuedMessageForThread,
   holdQueuedMessageForEdit,
@@ -55,7 +55,6 @@ import {
   ensureThreadIsNotAwaitingUserInteraction,
   ensureThreadIsWritable,
   ensureThreadQueueIsWritable,
-  sendThreadMessage,
 } from "../../services/threads/thread-send.js";
 import { acceptThreadSendRequest } from "../../services/threads/thread-send-request.js";
 import { editThreadMessage } from "../../services/threads/thread-edit-message.js";
@@ -70,6 +69,7 @@ import { stopThreadForCurrentState } from "../../services/threads/thread-lifecyc
 import {
   buildThreadStatusChangeMetadata,
   getThreadPromptBannerActivity,
+  getThreadTimelineGoal,
   toThreadListEntryResponses,
   toThreadResponseFromThread,
 } from "../../services/threads/thread-runtime-display.js";
@@ -132,38 +132,6 @@ function toQueuedMessageOrderResponse(
         "Queued messages with different execution options cannot be grouped",
       );
   }
-}
-
-async function compactThreadContext(
-  deps: AppDeps,
-  thread: Thread,
-): Promise<void> {
-  ensureThreadIsWritable(thread);
-  if (!deps.providerRegistry.supportsManualCompaction(thread.providerId)) {
-    throw new ApiError(
-      409,
-      "invalid_request",
-      `Provider "${thread.providerId}" does not support manual context compaction`,
-    );
-  }
-  if (thread.status !== "idle" && thread.status !== "error") {
-    throw new ApiError(
-      409,
-      "invalid_request",
-      "Context can only be compacted while the thread is idle or errored",
-    );
-  }
-
-  const environment = await requireThreadCommandEnvironment(deps, { thread });
-  await sendThreadMessage(deps, {
-    environment,
-    payload: {
-      input: createStandaloneBuiltinCompactCommandInput(),
-      mode: "start",
-    },
-    thread,
-    trigger: "user",
-  });
 }
 
 function toQueuedMessageGroupBoundaryResponse(
@@ -470,9 +438,8 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.clearGoal, async (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const activity = getThreadPromptBannerActivity(deps, thread);
-    if (activity.activeGoalCount === 0) {
-      throw new ApiError(409, "invalid_request", "No active Goal to clear");
+    if (getThreadTimelineGoal(deps, thread) === null) {
+      throw new ApiError(409, "invalid_request", "No Goal to clear");
     }
     const environment = await requireThreadCommandEnvironment(deps, {
       thread,
@@ -504,19 +471,13 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
       timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
     });
     const updatedThread = requirePublicThread(deps.db, thread.id);
-    const updatedActivity = getThreadPromptBannerActivity(deps, updatedThread);
-    if (updatedActivity.activeGoalCount > 0 && !result.cleared) {
+    if (getThreadTimelineGoal(deps, updatedThread) !== null) {
       throw new ApiError(
         409,
         "invalid_request",
-        "The provider did not clear the active Goal",
-      );
-    }
-    if (updatedActivity.activeGoalCount > 0) {
-      throw new ApiError(
-        409,
-        "invalid_request",
-        "The provider did not confirm that the active Goal was cleared",
+        result.cleared
+          ? "The provider did not confirm that the Goal was cleared"
+          : "The provider did not clear the Goal",
       );
     }
     return context.json({ ok: true });
@@ -562,6 +523,13 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
     if (!thread) {
       throw new ApiError(404, "thread_not_found", "Thread not found");
     }
+    return context.json(toThreadResponseFromThread(deps, { thread }));
+  });
+
+  post(routes.regenerateTitle, async (context) => {
+    const thread = await regenerateThreadTitle(deps, {
+      thread: requirePublicThread(deps.db, context.req.param("id")),
+    });
     return context.json(toThreadResponseFromThread(deps, { thread }));
   });
 
