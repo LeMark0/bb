@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createStore } from "../api";
 import type { TaskThreadLiveStatus } from "../db";
 import { registerLifecycle } from ".";
+import { commentsTag, threadsChangedTags } from "../shared/tags";
 
 interface TrackedThreadFixture {
   bb: ReturnType<typeof createFakePluginHost>["bb"];
@@ -99,9 +100,9 @@ describe("task thread lifecycle", () => {
       }),
     );
     expect(fixture.store.tasks.listComments(fixture.taskId)).toHaveLength(1);
-    expect(fixture.harness.realtimeSignals).toEqual([
-      { channel: "threads:changed", payload: { taskId: fixture.taskId } },
-      { channel: "comments:changed", payload: { taskId: fixture.taskId } },
+    expect(fixture.harness.experimental_rpcInvalidations).toEqual([
+      threadsChangedTags(fixture.taskId),
+      [commentsTag(fixture.taskId)],
     ]);
 
     await fixture.harness.dispose();
@@ -154,9 +155,9 @@ describe("task thread lifecycle", () => {
         body: 'Thread "Lifecycle worker" failed · thr_worker',
       }),
     );
-    expect(fixture.harness.realtimeSignals).toEqual([
-      { channel: "threads:changed", payload: { taskId: fixture.taskId } },
-      { channel: "comments:changed", payload: { taskId: fixture.taskId } },
+    expect(fixture.harness.experimental_rpcInvalidations).toEqual([
+      threadsChangedTags(fixture.taskId),
+      [commentsTag(fixture.taskId)],
     ]);
 
     await fixture.harness.emitThreadEvent("thread.active", {
@@ -187,9 +188,9 @@ describe("task thread lifecycle", () => {
     expect(
       fixture.store.tasks.getTaskThread(fixture.taskThreadId)?.liveStatus,
     ).toBe("idle");
-    expect(fixture.harness.realtimeSignals).toEqual([
-      { channel: "threads:changed", payload: { taskId: fixture.taskId } },
-      { channel: "comments:changed", payload: { taskId: fixture.taskId } },
+    expect(fixture.harness.experimental_rpcInvalidations).toEqual([
+      threadsChangedTags(fixture.taskId),
+      [commentsTag(fixture.taskId)],
     ]);
 
     await fixture.harness.dispose();

@@ -40,6 +40,7 @@ interface ThreadProbe {
 function useResolvedThread(
   thread: TaskThread | null,
   live: LiveThreads,
+  settlements: number,
 ): ResolvedThread {
   const sdk = useSdk();
   const threadId = thread?.threadId ?? null;
@@ -74,7 +75,7 @@ function useResolvedThread(
     return () => {
       cancelled = true;
     };
-  }, [sdk, shouldProbe, threadId, thread]);
+  }, [sdk, shouldProbe, threadId, thread, settlements]);
 
   if (thread === null) return { kind: "pending" };
   if (liveThread) {
@@ -102,9 +103,10 @@ function useResolvedThread(
 export function useMainThread(
   threads: readonly TaskThread[] | undefined,
   live: LiveThreads,
+  settlements: number,
 ): MainThreadState | null {
   const main = threads?.find((thread) => thread.isMain) ?? null;
-  const resolved = useResolvedThread(main, live);
+  const resolved = useResolvedThread(main, live, settlements);
   return main === null ? null : { thread: main, resolved };
 }
 

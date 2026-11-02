@@ -10,6 +10,8 @@
 @source "../../../plugins/provider-usage";
 @source "../../../plugins/secrets";
 @source "../../../plugins/worker-progress";
+@source "../../../plugins/provider-codex";
+@source "../../../plugins/composer/src";
 
 .ladle-main {
   padding: 0;
@@ -21,3 +23,4 @@
   --ladle-bg-color-secondary: var(--sidebar);
   --ladle-color-primary: var(--foreground);
 }
+@source "../../../plugins/thread-list";

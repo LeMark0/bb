@@ -29,6 +29,7 @@ import { ThreadPendingInteractionBanners } from "./ThreadPendingInteractionBanne
 import { InlinePendingInteractionContext } from "./PendingInteractionShell";
 import { makePluginRegistrationSet as registrationSet } from "@/test/fixtures/plugins";
 import { BottomAnchorContext } from "@/components/ui/bottom-anchored-scroll-body";
+import { createInertScrollPositionKeeper } from "@/test/scroll-position-keeper";
 
 const mocks = vi.hoisted(() => ({
   resolveMutateAsync: vi.fn(async () => ({})),
@@ -161,6 +162,28 @@ const commandApproval: PendingInteraction = {
             "`python3 -m unittest discover -s tests 2>&1 | tail -20\necho '=== bash -n ==='\nbash -n install.sh && echo OK\necho '=== watcher untouched ==='\ngit diff --stat -- watcher.py\necho '=== live flag ==='`",
         },
       ],
+      sessionGrant: null,
+    },
+  },
+};
+
+const chainedCommand =
+  "cd apps/app && pnpm install && pnpm exec turbo run typecheck && pnpm exec turbo run test --filter=@bb/app && git status --short";
+
+const chainedCommandApproval: PendingInteraction = {
+  ...planReview,
+  id: "pint_chained_cmd",
+  providerId: "claude-code",
+  payload: {
+    kind: "approval",
+    reason: null,
+    availableDecisions: ["allow_once", "deny"],
+    subject: {
+      kind: "command",
+      itemId: "call_chained_cmd",
+      command: chainedCommand,
+      cwd: null,
+      actions: [],
       sessionGrant: null,
     },
   },
@@ -435,6 +458,7 @@ describe("ThreadPendingInteractionBanner collapsed strip", () => {
               prompt: "Which path?",
               multiSelect: false,
               allowFreeText: true,
+              required: true,
               options: [],
             },
           ],
@@ -449,8 +473,7 @@ describe("ThreadPendingInteractionBanner collapsed strip", () => {
                 isAtBottom: true,
                 scrollToBottom: () => {},
                 scrollElementIntoView: () => {},
-                scrollElementIntoViewClampedToMaxScroll: () => {},
-                captureScrollAnchor: () => {},
+                positionKeeper: createInertScrollPositionKeeper(),
                 holdContentPosition: () => {},
               }}
             >
@@ -559,6 +582,18 @@ describe("ThreadPendingInteractionBanner collapsed strip", () => {
     expect(banner.hasAttribute("data-expanded")).toBe(false);
   });
 
+  it("puts each command of a long one-liner on its own line within the four-line preview", () => {
+    renderBanner(chainedCommandApproval);
+    const preview = screen.getByTestId("command-preview");
+    expect(preview.querySelector("pre")?.textContent).toBe(
+      "$ cd apps/app &&\n  pnpm install &&\n  pnpm exec turbo run typecheck &&\n  pnpm exec turbo run test --filter=@bb/app &&",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 more line" }));
+    expect(preview.querySelector("pre")?.textContent).toBe(
+      "$ cd apps/app &&\n  pnpm install &&\n  pnpm exec turbo run typecheck &&\n  pnpm exec turbo run test --filter=@bb/app &&\n  git status --short",
+    );
+  });
+
   it("toggles through the title without submitting an approval", () => {
     renderBanner(commandApproval);
     const title = screen.getByRole("button", {
@@ -662,6 +697,7 @@ describe("ThreadPendingInteractionBanner collapsed strip", () => {
             shortLabel: "Path",
             multiSelect: false,
             allowFreeText: false,
+            required: true,
             options: [{ value: "a", label: "A", description: "Option A" }],
           },
         ],
@@ -724,6 +760,7 @@ describe("ThreadPendingInteractionBanners", () => {
             prompt,
             multiSelect: false,
             allowFreeText: true,
+            required: true,
             options: [],
           },
         ],
