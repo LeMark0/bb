@@ -1,0 +1,64 @@
+name: Diagnose VCS admission
+
+on:
+  push:
+    branches:
+      - cr40-diagnose-vcs-admission
+
+env:
+  PRIMARY_NODE_VERSION: "22.x"
+  PNPM_VERSION: "9.15.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-vcs-admission
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: VCS admission diagnostic (windows-2025, Node 22.x)
+    if: github.repository == 'LeMark0/bb'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Setup pnpm
+        run: npm install --global pnpm@${{ env.PNPM_VERSION }} --ignore-scripts
+
+      - name: Restore Windows dependency disk
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: ./.github/actions/windows-dependency-cache
+
+      - name: Install process-utils dependencies
+        timeout-minutes: 10
+        shell: bash
+        run: bash .github/actions/setup-workspace/install-dependencies.sh --ignore-scripts --filter bb --filter "@bb/process-utils..." --filter "@bb/test-helpers..."
+
+      - name: Run the admission test file with tracing
+        timeout-minutes: 6
+        shell: bash
+        run: node .github/diagnostics/vcs-admission/run.mjs --out "$RUNNER_TEMP/vcs-admission-diagnostic" --sampler windows --pnpm-version "$(pnpm --version)"
+
+      - name: Upload diagnostic traces
+        if: ${{ always() }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vcs-admission-diagnostic-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vcs-admission-diagnostic
+          retention-days: 14
+          if-no-files-found: error
