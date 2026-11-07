@@ -45,7 +45,6 @@ export function listEntry(
       activeBackgroundAgentCount: 0,
       activeBackgroundCommandCount: 0,
       activePlanModeCount: 0,
-      activeGoalCount: 0,
     },
     queuedWork: "none",
     pinSortKey: null,

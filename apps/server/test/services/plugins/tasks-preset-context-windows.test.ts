@@ -151,9 +151,12 @@ async function withTasksAndCodex(
     registerTestHostRpcCapture(server, {
       hostId: host.id,
       sessionId: session.id,
+      gitCheckoutInspectionResult: {
+        checkout: { kind: "detached", headSha: "abc123" },
+      },
       gitSourceInspectionResult: {
         isWorktree: false,
-        checkout: { kind: "branch", branchName: "main", headSha: "abc123" },
+        checkout: { kind: "detached", headSha: "abc123" },
         defaultBranch: null,
         defaultBranchRelation: null,
         hasUncommittedChanges: false,
