@@ -1,4 +1,6 @@
 import {
+  desktopBrowserBrokerChallengeSchema,
+  desktopBrowserBrokerProofSchema,
   desktopBrowserCommandSchemas,
   desktopBrowserResultSchemas,
 } from "./desktop-browser.js";
@@ -10,32 +12,28 @@ import {
   availableModelSchema,
   discoveredWorkspacePropertiesSchema,
   dynamicToolSchema,
-  gitBranchOptionsSchema,
-  gitSourceInspectionSchema,
   instructionModeSchema,
   pendingInteractionResolutionSchema,
   permissionModeSchema,
   promptInputSchema,
   providerForkSchema,
-  threadGitDiffResponseSchema,
   runtimeThreadExecutionOptionsSchema,
-  rawDiffFileStatSchema,
-  workspaceDiffTargetSchema,
-  workspaceStatusSchema,
-  gitHostPullRequestSchema,
   clientTurnRequestIdSchema,
-  gitBranchNameSchema,
   jsonObjectSchema,
   jsonValueSchema,
   providerNativeRootSetSchema,
   providerNativeRootsSchema,
-  BRANCH_LIST_LIMIT_MAX,
-  BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_EXCLUDE_NAME_MAX_LENGTH,
   FILE_LIST_EXCLUDE_NAMES_MAX,
   FILE_LIST_LIMIT_MAX,
   FILE_LIST_QUERY_MAX_LENGTH,
   flattenPromptInputGroups,
+  BRANCH_LIST_LIMIT_MAX,
+  BRANCH_LIST_QUERY_MAX_LENGTH,
+  gitBranchNameSchema,
+  gitBranchOptionsSchema,
+  gitCheckoutRefSchema,
+  gitSourceInspectionSchema,
 } from "@bb/domain";
 import { z } from "zod";
 import {
@@ -45,9 +43,9 @@ import {
   providerCliInstallEventSchema,
   providerCliInstallActionKindSchema,
 } from "./local.js";
-import { workspaceResolutionFailureSchema } from "./workspace.js";
 import { HOST_ARTIFACT_MAX_BYTES } from "./protocol.js";
 import {
+  commandListResultSchema as providerCommandListResultSchema,
   providerHealthResultSchema,
   providerInstallationStatusSchema,
   providerUsageResultSchema,
@@ -57,13 +55,16 @@ import {
 
 export {
   HOST_ARTIFACT_MAX_BYTES,
+  HOST_DAEMON_COMPATIBLE_PROTOCOL_VERSIONS,
+  HOST_DAEMON_CONNECT_NEXT_PROTOCOL_VERSION,
+  HOST_DAEMON_DESKTOP_BROKER_PROOF_PROTOCOL_VERSION,
+  HOST_DAEMON_ENVIRONMENT_CLEANUP_INSPECTION_PROTOCOL_VERSION,
   HOST_DAEMON_PROTOCOL_VERSION,
+  hostDaemonSupportsConnectNext,
+  hostDaemonSupportsDesktopBrokerProof,
+  hostDaemonSupportsEnvironmentCleanupInspection,
+  isCompatibleHostDaemonProtocolVersion,
 } from "./protocol.js";
-export {
-  workspaceResolutionFailureCodeSchema,
-  type WorkspaceResolutionFailure,
-  type WorkspaceResolutionFailureCode,
-} from "./workspace.js";
 
 export {
   FILE_LIST_EXCLUDE_NAMES_MAX,
@@ -435,10 +436,21 @@ const hostReadFileCommandSchema = z
     type: z.literal("host.read_file"),
     path: z.string().min(1),
     rootPath: z.string().min(1).optional(),
+    followRootSymlink: z.boolean(),
     ref: z.string().min(1).optional(),
     ifNoneMatch: hostReadFileIfNoneMatchSchema.optional(),
   })
   .superRefine((command, context) => {
+    if (
+      command.followRootSymlink &&
+      (command.rootPath === undefined || command.ref !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["followRootSymlink"],
+        message: "followRootSymlink requires rootPath and no ref",
+      });
+    }
     if (command.ref !== undefined && command.rootPath === undefined) {
       context.addIssue({
         code: "custom",
@@ -476,20 +488,6 @@ const hostReadFileChunkResultSchema = z
   })
   .strict();
 
-const hostReadFileRelativeDotfilePolicySchema = z.enum(["allow", "deny"]);
-export type HostReadFileRelativeDotfilePolicy = z.infer<
-  typeof hostReadFileRelativeDotfilePolicySchema
->;
-
-const hostReadFileRelativeCommandSchema = z
-  .object({
-    type: z.literal("host.read_file_relative"),
-    rootPath: z.string().min(1),
-    path: z.string().min(1),
-    dotfiles: hostReadFileRelativeDotfilePolicySchema,
-  })
-  .strict();
-
 const hostWriteFileCommandSchema = z
   .object({
     type: z.literal("host.write_file"),
@@ -509,6 +507,7 @@ const fileListExcludeNamesSchema = z
 
 const hostListFilesCommandSchema = z.object({
   type: z.literal("host.list_files"),
+  followRootSymlink: z.boolean(),
   path: z.string().min(1),
   query: z.string().max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
   limit: z.number().int().positive().max(FILE_LIST_LIMIT_MAX),
@@ -690,6 +689,7 @@ const directoryListingSchema = z.object({
   directory: z.string(),
   parent: z.string().nullable(),
   entries: z.array(directoryEntrySchema),
+  roots: z.array(z.string()),
 });
 
 const hostCommandSourceSchema = z.enum(["skill", "command"]);
@@ -733,6 +733,8 @@ const discoveredSkillSchema = z.object({
   name: z.string(),
   description: z.string().nullable(),
   filePath: z.string(),
+  realPath: z.string(),
+  contentSha256: z.string().regex(/^[a-f0-9]{64}$/u),
   rootKind: skillRootKindSchema,
   linked: z.boolean(),
 });
@@ -890,6 +892,17 @@ const hostInspectGitSourceCommandSchema = z
   })
   .strict();
 
+const hostInspectGitCheckoutCommandSchema = z
+  .object({
+    type: z.literal("host.inspect_git_checkout"),
+    path: z.string().min(1),
+  })
+  .strict();
+
+const gitCheckoutInspectionSchema = z.object({
+  checkout: gitCheckoutRefSchema,
+});
+
 const hostListBranchOptionsCommandSchema = z
   .object({
     type: z.literal("host.list_branch_options"),
@@ -905,8 +918,19 @@ const providerListModelsCommandSchema = z.object({
   type: z.literal("provider.list_models"),
   providerId: z.string().min(1),
   bridgeLaunch: hostDaemonBridgeLaunchSchema,
+  selectedModel: z.string().min(1).optional(),
   cwd: z.string().min(1).optional(),
+  contributedEnv: z.array(hostDaemonContributedEnvEntrySchema),
 });
+
+const providerListCommandsCommandSchema = z
+  .object({
+    type: z.literal("provider.list_commands"),
+    providerId: z.string().min(1),
+    bridgeLaunch: hostDaemonBridgeLaunchSchema,
+    cwd: z.string().min(1).nullable(),
+  })
+  .strict();
 
 const providerHealthCommandSchema = z
   .object({
@@ -974,73 +998,6 @@ const environmentProvisionCancelCommandSchema =
     })
     .strict();
 
-const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
-  type: z.literal("workspace.status"),
-  mergeBaseBranch: gitBranchNameSchema.optional(),
-  maxFiles: z.number().int().positive(),
-  maxUntrackedLineStatFiles: z.number().int().positive(),
-  maxUntrackedLineStatBytes: z.number().int().positive(),
-});
-
-const workspaceDiffCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
-  type: z.literal("workspace.diff"),
-  target: workspaceDiffTargetSchema,
-  maxDiffBytes: z.number().int().positive(),
-  maxFileListBytes: z.number().int().positive(),
-  maxUntrackedFiles: z.number().int().positive(),
-});
-
-const workspaceDiffFilesCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
-  type: z.literal("workspace.diffFiles"),
-  target: workspaceDiffTargetSchema,
-  maxFiles: z.number().int().positive(),
-});
-
-const workspaceDiffPatchCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
-  type: z.literal("workspace.diffPatch"),
-  target: workspaceDiffTargetSchema,
-  paths: z.array(z.string()),
-  maxBytesPerFile: z.number().int().positive(),
-});
-
-const workspacePullRequestCommandSchema =
-  hostDaemonWorkspaceTargetSchema.extend({
-    type: z.literal("workspace.pull_request"),
-  });
-
-const pullRequestMergeMethodSchema = z.enum(["merge", "squash", "rebase"]);
-
-const workspacePullRequestReadyCommandSchema = hostDaemonWorkspaceTargetSchema
-  .extend({
-    type: z.literal("workspace.pull_request_action"),
-    operation: z.literal("ready"),
-  })
-  .strict();
-
-const workspacePullRequestDraftCommandSchema = hostDaemonWorkspaceTargetSchema
-  .extend({
-    type: z.literal("workspace.pull_request_action"),
-    operation: z.literal("draft"),
-  })
-  .strict();
-
-const workspacePullRequestMergeCommandSchema = hostDaemonWorkspaceTargetSchema
-  .extend({
-    type: z.literal("workspace.pull_request_action"),
-    operation: z.literal("merge"),
-    method: pullRequestMergeMethodSchema,
-  })
-  .strict();
-
-const workspacePullRequestActionCommandSchema = z.discriminatedUnion(
-  "operation",
-  [
-    workspacePullRequestReadyCommandSchema,
-    workspacePullRequestDraftCommandSchema,
-    workspacePullRequestMergeCommandSchema,
-  ],
-);
-
 const workspaceCommitCommandSchema = hostDaemonWorkspaceTargetSchema
   .extend({
     type: z.literal("workspace.commit"),
@@ -1079,93 +1036,6 @@ const fileWriteResultSchema = z.discriminatedUnion("outcome", [
     .object({
       outcome: z.literal("conflict"),
       currentSha256: z.string().nullable(),
-    })
-    .strict(),
-]);
-
-const workspaceStatusResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      outcome: z.literal("available"),
-      workspaceStatus: workspaceStatusSchema,
-    })
-    .strict(),
-  z
-    .object({
-      outcome: z.literal("unavailable"),
-      failure: workspaceResolutionFailureSchema,
-    })
-    .strict(),
-]);
-
-const workspaceDiffResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      outcome: z.literal("available"),
-      diff: threadGitDiffResponseSchema,
-    })
-    .strict(),
-  z
-    .object({
-      outcome: z.literal("unavailable"),
-      failure: workspaceResolutionFailureSchema,
-    })
-    .strict(),
-]);
-
-const workspaceDiffFilesResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      outcome: z.literal("available"),
-      files: z.array(rawDiffFileStatSchema),
-      shortstat: z.string(),
-      mergeBaseRef: z.string().nullable(),
-      truncated: z.boolean(),
-    })
-    .strict(),
-  z
-    .object({
-      outcome: z.literal("unavailable"),
-      failure: workspaceResolutionFailureSchema,
-    })
-    .strict(),
-]);
-
-const workspaceDiffPatchResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      outcome: z.literal("available"),
-      patches: z.array(
-        z
-          .object({
-            path: z.string(),
-            patch: z.string(),
-            truncated: z.boolean(),
-          })
-          .strict(),
-      ),
-    })
-    .strict(),
-  z
-    .object({
-      outcome: z.literal("unavailable"),
-      failure: workspaceResolutionFailureSchema,
-    })
-    .strict(),
-]);
-
-const workspacePullRequestResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      outcome: z.literal("available"),
-      pullRequest: gitHostPullRequestSchema,
-    })
-    .strict(),
-  z.object({ outcome: z.literal("absent") }).strict(),
-  z
-    .object({
-      outcome: z.literal("unavailable"),
-      message: z.string().min(1),
     })
     .strict(),
 ]);
@@ -1272,6 +1142,9 @@ const threadStartResultSchema = z.object({
   providerThreadId: z.string().min(1),
 });
 export const COMPETING_TURN_ERROR_CODE = "competing_turn" as const;
+export const STEER_UNCONFIRMED_ERROR_CODE = "steer_unconfirmed" as const;
+export const TURN_START_UNCONFIRMED_ERROR_CODE =
+  "turn_start_unconfirmed" as const;
 
 const threadStopResultSchema = z
   .object({
@@ -1318,7 +1191,6 @@ const workspaceCommitResultSchema = z.object({
   commitSha: z.string().min(1),
   commitSubject: z.string().min(1),
 });
-const workspacePullRequestActionResultSchema = z.object({}).strict();
 
 export { providerUsageWindowSchema };
 
@@ -1361,6 +1233,7 @@ export const discoverReposResultSchema = z
   .object({
     repos: z.array(discoveredRepoSchema),
     truncated: z.boolean(),
+    unreadableCount: z.number().int().nonnegative(),
   })
   .strict();
 export type DiscoverReposResult = z.infer<typeof discoverReposResultSchema>;
@@ -1419,6 +1292,20 @@ function defineHostDaemonCommandDescriptor<
 }
 
 export const hostDaemonCommandRegistry = {
+  "desktop.broker.prove": defineHostDaemonCommandDescriptor({
+    type: "desktop.broker.prove",
+    schema: z
+      .object({
+        type: z.literal("desktop.broker.prove"),
+        challenge: desktopBrowserBrokerChallengeSchema,
+      })
+      .strict(),
+    resultSchema: desktopBrowserBrokerProofSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "desktop.browser.list_instances": defineHostDaemonCommandDescriptor({
     type: "desktop.browser.list_instances",
     schema: desktopBrowserCommandSchemas["desktop.browser.list_instances"],
@@ -1666,15 +1553,6 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: "write",
   }),
-  "workspace.pull_request_action": defineHostDaemonCommandDescriptor({
-    type: "workspace.pull_request_action",
-    schema: workspacePullRequestActionCommandSchema,
-    resultSchema: workspacePullRequestActionResultSchema,
-    transport: "settled",
-    retryable: false,
-    flushEventsBeforeResult: false,
-    envLane: "write",
-  }),
   "host.list_files": defineHostDaemonCommandDescriptor({
     type: "host.list_files",
     schema: hostListFilesCommandSchema,
@@ -1771,6 +1649,28 @@ export const hostDaemonCommandRegistry = {
     resultSchema: emptyCommandResultSchema,
     transport: "onlineRpc",
     retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.inspect_cleanup": defineHostDaemonCommandDescriptor({
+    type: "environment.inspect_cleanup",
+    schema: z
+      .object({
+        type: z.literal("environment.inspect_cleanup"),
+        environmentId: z.string().min(1),
+        path: z.string().min(1),
+      })
+      .strict(),
+    resultSchema: z
+      .object({
+        supported: z.boolean(),
+        active: z.boolean(),
+        pids: z.array(z.number().int().positive()),
+        unreadablePids: z.array(z.number().int().positive()),
+      })
+      .strict(),
+    transport: "onlineRpc",
+    retryable: true,
     flushEventsBeforeResult: false,
     envLane: null,
   }),
@@ -1893,6 +1793,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "host.inspect_git_checkout": defineHostDaemonCommandDescriptor({
+    type: "host.inspect_git_checkout",
+    schema: hostInspectGitCheckoutCommandSchema,
+    resultSchema: gitCheckoutInspectionSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "host.list_branch_options": defineHostDaemonCommandDescriptor({
     type: "host.list_branch_options",
     schema: hostListBranchOptionsCommandSchema,
@@ -1920,15 +1829,6 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
-  "host.read_file_relative": defineHostDaemonCommandDescriptor({
-    type: "host.read_file_relative",
-    schema: hostReadFileRelativeCommandSchema,
-    resultSchema: fileReadResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: null,
-  }),
   "host.write_file": defineHostDaemonCommandDescriptor({
     type: "host.write_file",
     schema: hostWriteFileCommandSchema,
@@ -1942,6 +1842,15 @@ export const hostDaemonCommandRegistry = {
     type: "provider.list_models",
     schema: providerListModelsCommandSchema,
     resultSchema: providerListModelsResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "provider.list_commands": defineHostDaemonCommandDescriptor({
+    type: "provider.list_commands",
+    schema: providerListCommandsCommandSchema,
+    resultSchema: providerCommandListResultSchema,
     transport: "onlineRpc",
     retryable: true,
     flushEventsBeforeResult: false,
@@ -1987,51 +1896,6 @@ export const hostDaemonCommandRegistry = {
     type: "host.discover_repos",
     schema: discoverReposCommandSchema,
     resultSchema: discoverReposResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: null,
-  }),
-  "workspace.status": defineHostDaemonCommandDescriptor({
-    type: "workspace.status",
-    schema: workspaceStatusCommandSchema,
-    resultSchema: workspaceStatusResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: "read",
-  }),
-  "workspace.diff": defineHostDaemonCommandDescriptor({
-    type: "workspace.diff",
-    schema: workspaceDiffCommandSchema,
-    resultSchema: workspaceDiffResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: "read",
-  }),
-  "workspace.diffFiles": defineHostDaemonCommandDescriptor({
-    type: "workspace.diffFiles",
-    schema: workspaceDiffFilesCommandSchema,
-    resultSchema: workspaceDiffFilesResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: "read",
-  }),
-  "workspace.diffPatch": defineHostDaemonCommandDescriptor({
-    type: "workspace.diffPatch",
-    schema: workspaceDiffPatchCommandSchema,
-    resultSchema: workspaceDiffPatchResultSchema,
-    transport: "onlineRpc",
-    retryable: true,
-    flushEventsBeforeResult: false,
-    envLane: "read",
-  }),
-  "workspace.pull_request": defineHostDaemonCommandDescriptor({
-    type: "workspace.pull_request",
-    schema: workspacePullRequestCommandSchema,
-    resultSchema: workspacePullRequestResultSchema,
     transport: "onlineRpc",
     retryable: true,
     flushEventsBeforeResult: false,
@@ -2115,9 +1979,7 @@ type HostDaemonRetryableOnlineRpcCommandSchema =
 type HostDaemonResultSchemaMapForTransport<
   Transport extends HostDaemonCommandTransport,
 > = {
-  [
-    Descriptor in HostDaemonCommandDescriptorForTransport<Transport> as Descriptor["type"]
-  ]: Descriptor["resultSchema"];
+  [Descriptor in HostDaemonCommandDescriptorForTransport<Transport> as Descriptor["type"]]: Descriptor["resultSchema"];
 };
 
 type HostDaemonCommandResultSchemaMap =

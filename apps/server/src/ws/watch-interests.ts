@@ -1,9 +1,9 @@
-import { environments, threads, type DbConnection } from "@bb/db";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { environments, liveThread, threads, type DbConnection } from "@bb/db";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   realtimeSubscriptionTargetKey,
+  resolveEnvironmentMergeBaseBranch,
   type EnvironmentChangeKind,
-  type RealtimeSubscriptionTarget,
   type ThreadChangeKind,
   type ThreadEventType,
 } from "@bb/domain";
@@ -14,11 +14,7 @@ import type {
 } from "@bb/host-daemon-contract";
 import { workspaceContextFromPath } from "../services/environments/workspace-command-target.js";
 import type { NotificationHub, ServerChangedMessage } from "./hub.js";
-
-interface WatchInterestSocket {
-  close(code?: number, reason?: string): void;
-  send(data: string): void;
-}
+import type { WatchedTarget, WatchedTargetChange } from "./watched-targets.js";
 
 interface WatchInterestCoordinatorDeps {
   db: DbConnection;
@@ -30,6 +26,10 @@ interface ResolvedWatchInterestTarget {
   threadStorageTarget?: HostDaemonWatchSetThreadStorageTarget;
   workspaceTarget?: HostDaemonWatchSetWorkspaceTarget;
 }
+
+type WatchInterestTarget = WatchedTarget<
+  "environment-detail" | "thread-detail"
+>;
 
 const WATCH_TARGET_QUERY_BATCH_SIZE = 500;
 
@@ -57,30 +57,8 @@ function emptyWatchSet(generation: number): HostDaemonWatchSet {
   };
 }
 
-function isWatchableSubscriptionTarget(
-  target: RealtimeSubscriptionTarget,
-): target is Extract<
-  RealtimeSubscriptionTarget,
-  { kind: "environment-detail" | "thread-detail" }
-> {
-  return (
-    target.kind === "environment-detail" || target.kind === "thread-detail"
-  );
-}
-
 export class WatchInterestCoordinator {
-  private readonly interestsBySocket = new Map<
-    WatchInterestSocket,
-    Set<string>
-  >();
-  private readonly socketsByInterest = new Map<
-    string,
-    Set<WatchInterestSocket>
-  >();
-  private readonly targetsByInterest = new Map<
-    string,
-    RealtimeSubscriptionTarget
-  >();
+  private readonly targetsByInterest = new Map<string, WatchInterestTarget>();
   private readonly generationByHost = new Map<string, number>();
   private readonly lastWatchTargetFingerprintByHost = new Map<string, string>();
   private readonly lastResolvedHostIdsByInterest = new Map<
@@ -89,90 +67,30 @@ export class WatchInterestCoordinator {
   >();
 
   constructor(private readonly deps: WatchInterestCoordinatorDeps) {
+    this.deps.hub.onWatchedTargets(
+      ["environment-detail", "thread-detail"],
+      (change) => {
+        this.applyWatchedTargetChange(change);
+      },
+    );
     this.deps.hub.onChangedMessage((message) => {
       this.refreshWatchSetsForChangedMessage(message);
     });
   }
 
-  subscribe(
-    socket: WatchInterestSocket,
-    target: RealtimeSubscriptionTarget,
+  private applyWatchedTargetChange(
+    change: WatchedTargetChange<WatchInterestTarget>,
   ): void {
-    if (!isWatchableSubscriptionTarget(target)) {
-      return;
+    const affectedInterestKeys = new Set<string>();
+    for (const target of change.stopped) {
+      const key = realtimeSubscriptionTargetKey(target);
+      this.targetsByInterest.delete(key);
+      affectedInterestKeys.add(key);
     }
-
-    const key = realtimeSubscriptionTargetKey(target);
-    const socketInterests =
-      this.interestsBySocket.get(socket) ?? new Set<string>();
-    const wasPresent = socketInterests.has(key);
-    socketInterests.add(key);
-    this.interestsBySocket.set(socket, socketInterests);
-
-    const sockets =
-      this.socketsByInterest.get(key) ?? new Set<WatchInterestSocket>();
-    sockets.add(socket);
-    this.socketsByInterest.set(key, sockets);
-    this.targetsByInterest.set(key, target);
-
-    if (wasPresent) {
-      return;
-    }
-    this.sendSnapshotsForInterestKey(key);
-  }
-
-  unsubscribe(
-    socket: WatchInterestSocket,
-    target: RealtimeSubscriptionTarget,
-  ): void {
-    if (!isWatchableSubscriptionTarget(target)) {
-      return;
-    }
-
-    const key = realtimeSubscriptionTargetKey(target);
-    const socketInterests = this.interestsBySocket.get(socket);
-    if (!socketInterests?.has(key)) {
-      return;
-    }
-
-    socketInterests.delete(key);
-    if (socketInterests.size === 0) {
-      this.interestsBySocket.delete(socket);
-    }
-
-    const sockets = this.socketsByInterest.get(key);
-    if (sockets) {
-      sockets.delete(socket);
-      if (sockets.size === 0) {
-        this.socketsByInterest.delete(key);
-        this.targetsByInterest.delete(key);
-      }
-    }
-
-    this.sendSnapshotsForInterestKey(key);
-    if (!this.socketsByInterest.has(key)) {
-      this.lastResolvedHostIdsByInterest.delete(key);
-    }
-  }
-
-  releaseSocket(socket: WatchInterestSocket): void {
-    const socketInterests = this.interestsBySocket.get(socket);
-    if (!socketInterests) {
-      return;
-    }
-
-    const affectedInterestKeys = [...socketInterests];
-    this.interestsBySocket.delete(socket);
-    for (const key of affectedInterestKeys) {
-      const sockets = this.socketsByInterest.get(key);
-      if (!sockets) {
-        continue;
-      }
-      sockets.delete(socket);
-      if (sockets.size === 0) {
-        this.socketsByInterest.delete(key);
-        this.targetsByInterest.delete(key);
-      }
+    for (const target of change.started) {
+      const key = realtimeSubscriptionTargetKey(target);
+      this.targetsByInterest.set(key, target);
+      affectedInterestKeys.add(key);
     }
 
     const resolvedTargets = this.resolveTargets();
@@ -181,7 +99,7 @@ export class WatchInterestCoordinator {
       for (const hostId of this.hostIdsForInterestKey(key, resolvedTargets)) {
         affectedHostIds.add(hostId);
       }
-      if (!this.socketsByInterest.has(key)) {
+      if (!this.targetsByInterest.has(key)) {
         this.lastResolvedHostIdsByInterest.delete(key);
       }
     }
@@ -196,7 +114,9 @@ export class WatchInterestCoordinator {
     });
   }
 
-  refreshWatchSetsForChangedMessage(message: ServerChangedMessage): void {
+  private refreshWatchSetsForChangedMessage(
+    message: ServerChangedMessage,
+  ): void {
     const affectedInterestKeys = this.interestKeysForChangedMessage(message);
     if (affectedInterestKeys.size === 0) {
       return;
@@ -210,14 +130,6 @@ export class WatchInterestCoordinator {
       }
     }
     this.sendSnapshotsForHosts(affectedHostIds, resolvedTargets);
-  }
-
-  private sendSnapshotsForInterestKey(key: string): void {
-    const resolvedTargets = this.resolveTargets();
-    this.sendSnapshotsForHosts(
-      this.hostIdsForInterestKey(key, resolvedTargets),
-      resolvedTargets,
-    );
   }
 
   private sendSnapshotsForHosts(
@@ -353,6 +265,7 @@ export class WatchInterestCoordinator {
       case "project":
       case "host":
       case "system":
+      case "plugin":
         return keys;
     }
   }
@@ -409,6 +322,9 @@ export class WatchInterestCoordinator {
           id: environments.id,
           hostId: environments.hostId,
           path: environments.path,
+          mergeBaseBranch: environments.mergeBaseBranch,
+          baseBranch: environments.baseBranch,
+          defaultBranch: environments.defaultBranch,
         })
         .from(environments)
         .where(
@@ -438,6 +354,8 @@ export class WatchInterestCoordinator {
               workspaceContext: workspaceContextFromPath({
                 path: environment.path,
               }),
+              mergeBaseBranch:
+                resolveEnvironmentMergeBaseBranch(environment) ?? null,
             },
           },
         );
@@ -451,7 +369,6 @@ export class WatchInterestCoordinator {
       const rows = this.deps.db
         .select({
           id: threads.id,
-          environmentId: environments.id,
           hostId: environments.hostId,
         })
         .from(threads)
@@ -462,8 +379,7 @@ export class WatchInterestCoordinator {
               threads.id,
               threadIds.slice(offset, offset + WATCH_TARGET_QUERY_BATCH_SIZE),
             ),
-            isNull(threads.deletedAt),
-            isNull(threads.archivedAt),
+            liveThread,
             ne(environments.status, "destroyed"),
           ),
         )
@@ -477,7 +393,6 @@ export class WatchInterestCoordinator {
           {
             hostId: thread.hostId,
             threadStorageTarget: {
-              environmentId: thread.environmentId,
               threadId: thread.id,
             },
           },

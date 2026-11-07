@@ -16,24 +16,21 @@ const SANDBOX_ESCAPED_BADGE = {
 
 export function commandPresentation(args: {
   command: string;
-  description: string | null;
   background: boolean;
   sandboxEscaped: boolean;
 }): DeltaPresentation {
-  const intent = presentationTitle(args.description ?? "");
-  const base: DeltaPresentation = {
-    label: args.background
-      ? {
-          pending: "Starting background command",
-          completed: "Started background command",
-        }
-      : { pending: "Running command", completed: "Ran command" },
-    icon: { glyph: "Terminal" },
-  };
-  const presentation =
-    intent === undefined || args.command.trim().length === 0
-      ? withTitle(base, presentationTitle(args.command))
-      : { ...base, title: intent, detail: presentationDetail(args.command) };
+  const presentation = withTitle(
+    {
+      label: args.background
+        ? {
+            pending: "Starting background command",
+            completed: "Started background command",
+          }
+        : { pending: "Running command", completed: "Ran command" },
+      icon: { glyph: "Terminal" },
+    },
+    presentationTitle(args.command),
+  );
   return args.sandboxEscaped
     ? { ...presentation, badge: SANDBOX_ESCAPED_BADGE }
     : presentation;

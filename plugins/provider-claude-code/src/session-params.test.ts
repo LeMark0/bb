@@ -13,7 +13,10 @@ const EXECUTION_CONTEXT = {
   workflowsEnabled: true,
   chromeEnabled: true,
   disable1MContext: false,
+  artifactsEnabled: true,
   sandboxEnabled: false,
+  fullAccessApprovalsEnabled: true,
+  commandDescriptionsEnabled: true,
   memoryEnabled: false,
   providerSubagentsEnabled: false,
   instructions: "Session instructions",
@@ -30,7 +33,10 @@ function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
     workflowsEnabled,
     chromeEnabled,
     disable1MContext,
+    artifactsEnabled,
     sandboxEnabled,
+    fullAccessApprovalsEnabled,
+    commandDescriptionsEnabled,
     memoryEnabled,
     providerSubagentsEnabled,
     ...core
@@ -42,7 +48,10 @@ function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
       workflowsEnabled,
       chromeEnabled,
       disable1MContext,
+      artifactsEnabled,
       sandboxEnabled,
+      fullAccessApprovalsEnabled,
+      commandDescriptionsEnabled,
       memoryEnabled,
       providerSubagentsEnabled,
     },
@@ -88,7 +97,10 @@ describe("buildClaudeSessionParams", () => {
       permissionMode: "plan",
       workflowsEnabled: true,
       chromeEnabled: true,
+      artifactsEnabled: true,
       sandboxEnabled: false,
+      fullAccessApprovalsEnabled: true,
+      commandDescriptionsEnabled: true,
       memoryEnabled: false,
       providerSubagentsEnabled: false,
       model: "claude-sonnet-5",
@@ -109,7 +121,10 @@ describe("buildClaudeSessionParams", () => {
     expect(params).toMatchObject({
       workflowsEnabled: false,
       chromeEnabled: false,
+      artifactsEnabled: false,
       sandboxEnabled: true,
+      fullAccessApprovalsEnabled: false,
+      commandDescriptionsEnabled: false,
       permissionMode: "bypassPermissions",
       approvedPlanPermissionMode: "bypassPermissions",
       permissionEscalation: null,
@@ -289,6 +304,7 @@ describe("buildClaudeTurnParams", () => {
     expect(params.workflowsEnabled).toBeUndefined();
     expect(params.chromeEnabled).toBeUndefined();
     expect(params.sandboxEnabled).toBeUndefined();
+    expect(params.fullAccessApprovalsEnabled).toBeUndefined();
     expect(params.memoryEnabled).toBeUndefined();
     expect(params.providerSubagentsEnabled).toBeUndefined();
     expect(params.permissionEscalation).toBeNull();

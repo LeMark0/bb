@@ -1,17 +1,13 @@
-import {
-  collectOptionalFieldPaths,
-  makeWorkspaceStatus,
-} from "@bb/test-helpers";
-import type { WorkspaceResolutionFailure } from "@bb/host-daemon-contract";
+import { collectOptionalFieldPaths } from "@bb/test-helpers";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
-  gitBranchSelectionSchema,
   TERMINAL_COLS_MAX,
   TERMINAL_DATA_MAX_BASE64_LENGTH,
   TERMINAL_DATA_MAX_BYTES,
   TERMINAL_ROWS_MAX,
+  gitBranchSelectionSchema,
 } from "@bb/domain";
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
@@ -43,6 +39,7 @@ import {
   updateEnvironmentRequestSchema,
   unmanagedBranchSpecSchema,
 } from "../src/index.js";
+import type { WorkspaceResolutionFailure } from "@bb/host-daemon-contract/workspace";
 
 interface OptionalServerFieldGroup {
   fields: readonly string[];
@@ -56,15 +53,15 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     reason:
       "Older parent notices have no per-child outcomes. New notices omit interruption details for completed, failed, or unclassified turns; a recorded host-connection-loss cause is optional even when the interruption reason is known.",
     fields: [
-      "threadTimelineResponseSchema.delta.upsertRows.systemMessageSubject.outcomes",
-      "threadTimelineResponseSchema.delta.upsertRows.systemMessageSubject.outcomes.interruption",
-      "threadTimelineResponseSchema.delta.upsertRows.systemMessageSubject.outcomes.interruption.cause",
       "threadTimelineResponseSchema.rows.systemMessageSubject.outcomes",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.systemMessageSubject.outcomes",
       "threadTimelineResponseSchema.rows.systemMessageSubject.outcomes.interruption",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.systemMessageSubject.outcomes.interruption",
       "threadTimelineResponseSchema.rows.systemMessageSubject.outcomes.interruption.cause",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.systemMessageSubject.outcomes.interruption.cause",
+      "sendQueuedMessageResponseSchema.queuedMessage.systemNotice.subject.outcomes",
+      "sendQueuedMessageResponseSchema.queuedMessage.systemNotice.subject.outcomes.interruption",
+      "sendQueuedMessageResponseSchema.queuedMessage.systemNotice.subject.outcomes.interruption.cause",
     ],
   },
   {
@@ -130,7 +127,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadPendingInteractionsResponseSchema.payload.presentation",
       "threadTimelineResponseSchema.activeBackgroundCommands.presentation",
       "threadTimelineResponseSchema.activeWorkflows.presentation",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation",
       "threadTimelineResponseSchema.rows.presentation",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.presentation",
     ],
@@ -159,11 +155,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadTimelineResponseSchema.activeWorkflows.presentation.suppress",
       "threadTimelineResponseSchema.activeWorkflows.presentation.tint",
       "threadTimelineResponseSchema.activeWorkflows.presentation.title",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation.badge",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation.detail",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation.suppress",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation.tint",
-      "threadTimelineResponseSchema.delta.upsertRows.presentation.title",
       "threadTimelineResponseSchema.rows.presentation.badge",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.presentation.badge",
       "threadTimelineResponseSchema.rows.presentation.detail",
@@ -183,9 +174,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadPendingInteractionsResponseSchema.payload.questions.options",
       "threadPendingInteractionsResponseSchema.payload.questions.options.description",
       "threadPendingInteractionsResponseSchema.payload.questions.shortLabel",
-      "threadTimelineResponseSchema.delta.upsertRows.questions.options",
-      "threadTimelineResponseSchema.delta.upsertRows.questions.options.description",
-      "threadTimelineResponseSchema.delta.upsertRows.questions.shortLabel",
       "threadTimelineResponseSchema.rows.questions.options",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.questions.options",
       "threadTimelineResponseSchema.rows.questions.options.description",
@@ -226,20 +214,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadTimelineResponseSchema.activeWorkflows.workflow.agents.startedAt",
       "threadTimelineResponseSchema.activeWorkflows.workflow.agents.tokens",
       "threadTimelineResponseSchema.activeWorkflows.workflow.agents.toolCalls",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.agentType",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.durationMs",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.error",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.isolation",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.lastToolName",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.lastToolSummary",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.phaseIndex",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.phaseTitle",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.promptPreview",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.queuedAt",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.resultPreview",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.startedAt",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.tokens",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.agents.toolCalls",
       "threadTimelineResponseSchema.rows.workflow.agents.agentType",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.workflow.agents.agentType",
       "threadTimelineResponseSchema.rows.workflow.agents.durationMs",
@@ -276,7 +250,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     fields: [
       "threadTimelineResponseSchema.activeBackgroundCommands.workflow.phases.kind",
       "threadTimelineResponseSchema.activeWorkflows.workflow.phases.kind",
-      "threadTimelineResponseSchema.delta.upsertRows.workflow.phases.kind",
       "threadTimelineResponseSchema.rows.workflow.phases.kind",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.workflow.phases.kind",
     ],
@@ -285,10 +258,8 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     reason:
       "A command row carries an output preview only when its output was truncated and the full text may still be fetchable, and a row is marked contentDeferred only when its expandable content was left out to be loaded on expand; absence means the row's fields hold the whole content.",
     fields: [
-      "threadTimelineResponseSchema.delta.upsertRows.contentDeferred",
       "threadTimelineResponseSchema.rows.contentDeferred",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.contentDeferred",
-      "threadTimelineResponseSchema.delta.upsertRows.outputPreview",
       "threadTimelineResponseSchema.rows.outputPreview",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.outputPreview",
     ],
@@ -297,7 +268,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     reason:
       "A generic operation row carries a reasoning id only when the provider tied the operation to a reasoning block; absence means there is no reasoning to link to.",
     fields: [
-      "threadTimelineResponseSchema.delta.upsertRows.reasoningId",
       "threadTimelineResponseSchema.rows.reasoningId",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.reasoningId",
     ],
@@ -306,9 +276,6 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     reason:
       "A plan step carries a status only once the provider reports progress on it; absence means the step is listed but not yet started, which is not the same as pending. It carries an id and prerequisites only when the provider reports them: absent prerequisites mean the provider sent no dependency data, which is not the same as an empty list of prerequisites.",
     fields: [
-      "threadTimelineResponseSchema.delta.upsertRows.steps.id",
-      "threadTimelineResponseSchema.delta.upsertRows.steps.needs",
-      "threadTimelineResponseSchema.delta.upsertRows.steps.status",
       "threadTimelineResponseSchema.rows.steps.id",
       "threadTimelineResponseSchema.rows.steps.needs",
       "threadTimelineResponseSchema.rows.steps.status",
@@ -378,8 +345,11 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "Thread creation may omit visibility for backward compatibility; the server fills visible at the creation boundary.",
-    fields: ["createThreadRequestSchema.visibility"],
+      "Thread creation may omit visibility and parentNotifications; the server fills visible and auto at the creation boundary.",
+    fields: [
+      "createThreadRequestSchema.visibility",
+      "createThreadRequestSchema.parentNotifications",
+    ],
   },
   {
     reason:
@@ -468,10 +438,12 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "Queued and follow-up messages omit senderThreadId unless the request originates from another thread.",
+      "Thread creation, queued messages, and follow-up messages omit their sender unless the request originates from another thread or, for sends, a plugin.",
     fields: [
       "createQueuedMessageRequestSchema.senderThreadId",
       "sendMessageRequestSchema.senderThreadId",
+      "createThreadRequestSchema.senderThreadId",
+      "sendMessageRequestSchema.originPluginId",
     ],
   },
   {
@@ -502,6 +474,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "updateThreadRequestSchema.sessionOptions",
       "updateThreadRequestSchema.title",
       "updateThreadRequestSchema.visibility",
+      "updateThreadRequestSchema.parentNotifications",
     ],
   },
   {
@@ -529,12 +502,14 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "System provider lookups may target a host indirectly or directly, omit provider id to use the host default, omit the project when no project checkout should scope the model list, and omit capability to return the full roster.",
+      "System provider lookups may target a host indirectly or directly, omit provider id to use the host default, omit the project when no project checkout should scope the model list, omit preferCached to wait for model discovery instead of answering a cached model-load failure, and omit capability to return the full roster.",
     fields: [
       "systemExecutionOptionsQuerySchema.environmentId",
       "systemExecutionOptionsQuerySchema.hostId",
+      "systemExecutionOptionsQuerySchema.preferCached",
       "systemExecutionOptionsQuerySchema.projectId",
       "systemExecutionOptionsQuerySchema.providerId",
+      "systemExecutionOptionsQuerySchema.selectedModel",
       "systemProvidersQuerySchema.capability",
       "systemProvidersQuerySchema.environmentId",
       "systemProvidersQuerySchema.hostId",
@@ -568,6 +543,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadListQuerySchema.parentThreadId",
       "threadListQuerySchema.projectId",
       "threadListQuerySchema.sourceThreadId",
+      "threadListQuerySchema.threadIds",
       "threadListQuerySchema.unsectioned",
     ],
   },
@@ -580,7 +556,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadTimelineQuerySchema.beforeAnchorSeq",
       "threadTimelineQuerySchema.beforeAnchorId",
       "threadTimelineQuerySchema.summaryOnly",
-      "threadTimelineQuerySchema.afterSequence",
+      "threadTimelineQuerySchema.afterTag",
       "threadTimelineQuerySchema.deferContent",
     ],
   },
@@ -591,19 +567,17 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "Context snapshots are omitted when the latest measurement has no breakdown, and session cost when the provider reports none.",
+      "Context snapshots are omitted when the latest measurement has no breakdown, session cost when the provider reports none, and the compaction offer time unless the compactExpiredCache experiment is on and the provider reported a prompt-cache lifetime for a context of at least 100k tokens.",
     fields: [
       "threadTimelineResponseSchema.contextWindowUsage.snapshot",
       "threadTimelineResponseSchema.contextWindowUsage.cost",
+      "threadTimelineResponseSchema.contextWindowUsage.compactionOfferAt",
     ],
   },
   {
     reason:
-      "Timeline responses carry a row-patch delta only for a usable afterSequence, and that delta carries rowOrder only when membership or ordering changed.",
-    fields: [
-      "threadTimelineResponseSchema.delta",
-      "threadTimelineResponseSchema.delta.rowOrder",
-    ],
+      "Timeline deltas carry rowOrder only when membership or ordering changed.",
+    fields: ["timelineDeltaSchema.rowOrder"],
   },
   {
     reason:
@@ -627,10 +601,11 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "sendAt is present only when the caller is scheduling the dispatch; omission means attempt the dispatch now, which allocates no queued row at all when nothing blocks it.",
+      "sendAt is present only when the caller is scheduling the dispatch, and compactFirst only when it asks to compact before the message; omission means attempt the dispatch now, which allocates no queued row at all when nothing blocks it.",
     fields: [
       "createThreadRequestSchema.sendAt",
       "sendMessageRequestSchema.sendAt",
+      "sendMessageRequestSchema.compactFirst",
     ],
   },
   {
@@ -685,68 +660,6 @@ const WORKSPACE_RESOLUTION_FAILURE: WorkspaceResolutionFailure = {
 };
 
 describe("environment workspace response contract", () => {
-  it("uses explicit status outcomes instead of nullable parallel fields", () => {
-    expect(
-      contract.environmentStatusResponseSchema.safeParse({
-        outcome: "available",
-        workspace: makeWorkspaceStatus(),
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentStatusResponseSchema.safeParse({
-        outcome: "not_applicable",
-        reason: "non_git_environment",
-        message: "Workspace status is not available for non-git environments",
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentStatusResponseSchema.safeParse({
-        outcome: "unavailable",
-        failure: WORKSPACE_RESOLUTION_FAILURE,
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentStatusResponseSchema.safeParse({
-        workspace: null,
-        workspaceUnavailable: null,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("uses explicit diff outcomes instead of nullable parallel fields", () => {
-    expect(
-      contract.environmentDiffResponseSchema.safeParse({
-        outcome: "available",
-        diff: {
-          diff: "",
-          files: "",
-          mergeBaseRef: null,
-          shortstat: "",
-          truncated: false,
-        },
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentDiffResponseSchema.safeParse({
-        outcome: "not_applicable",
-        reason: "non_git_environment",
-        message: "Workspace diff is not available for non-git environments",
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentDiffResponseSchema.safeParse({
-        outcome: "unavailable",
-        failure: WORKSPACE_RESOLUTION_FAILURE,
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentDiffResponseSchema.safeParse({
-        diff: null,
-        workspaceUnavailable: WORKSPACE_RESOLUTION_FAILURE,
-      }).success,
-    ).toBe(false);
-  });
-
   it("types workspace unavailable environment action errors", () => {
     expect(
       contract.environmentActionApiErrorSchema.safeParse({
@@ -855,16 +768,6 @@ describe("git branch name contract", () => {
       }).success,
     ).toBe(false);
     expect(
-      contract.environmentDiffBranchesQuerySchema.safeParse({
-        selectedBranch: "origin/main",
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentDiffBranchesQuerySchema.safeParse({
-        selectedBranch: "origin/main lock",
-      }).success,
-    ).toBe(false);
-    expect(
       contract.projectBranchesQuerySchema.safeParse({
         hostId: "host_123",
         selectedBranch: "upstream/main",
@@ -898,28 +801,6 @@ describe("git branch name contract", () => {
       }).success,
     ).toBe(false);
     expect(updateEnvironmentRequestSchema.safeParse({}).success).toBe(false);
-    expect(
-      contract.environmentStatusQuerySchema.safeParse({
-        mergeBaseBranch: "origin/main",
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentStatusQuerySchema.safeParse({
-        mergeBaseBranch: "origin/main lock",
-      }).success,
-    ).toBe(false);
-    expect(
-      contract.environmentDiffQuerySchema.safeParse({
-        target: "all",
-        mergeBaseBranch: "origin/main",
-      }).success,
-    ).toBe(true);
-    expect(
-      contract.environmentDiffQuerySchema.safeParse({
-        target: "all",
-        mergeBaseBranch: "origin/main lock",
-      }).success,
-    ).toBe(false);
   });
 });
 
@@ -1280,6 +1161,7 @@ describe("server-contract canonical schemas", () => {
           originKind: null,
           originPluginId: null,
           visibility: "visible",
+          parentNotifications: "auto",
           archivedAt: null,
           pinnedAt: null,
           pinSortKey: null,
@@ -1296,7 +1178,6 @@ describe("server-contract canonical schemas", () => {
             activeBackgroundAgentCount: 0,
             activeBackgroundCommandCount: 0,
             activePlanModeCount: 0,
-            activeGoalCount: 0,
           },
           hasPendingInteraction: true,
           environmentHostId: "host_123",
@@ -1381,32 +1262,6 @@ describe("server-contract canonical schemas", () => {
       action: "commit",
     });
 
-    expect(
-      environmentActionRequestSchema.parse({
-        action: "pull_request_ready",
-      }),
-    ).toMatchObject({
-      action: "pull_request_ready",
-    });
-
-    expect(
-      environmentActionRequestSchema.parse({
-        action: "pull_request_merge",
-        options: { method: "rebase" },
-      }),
-    ).toMatchObject({
-      action: "pull_request_merge",
-      options: { method: "rebase" },
-    });
-
-    expect(
-      environmentActionRequestSchema.parse({
-        action: "pull_request_draft",
-      }),
-    ).toMatchObject({
-      action: "pull_request_draft",
-    });
-
     expect(() =>
       environmentActionRequestSchema.parse({
         action: "squash_merge",
@@ -1417,7 +1272,7 @@ describe("server-contract canonical schemas", () => {
     expect(() =>
       environmentActionRequestSchema.parse({
         action: "pull_request_merge",
-        options: { method: "admin" },
+        options: { method: "squash" },
       }),
     ).toThrow();
 
@@ -1448,28 +1303,6 @@ describe("server-contract canonical schemas", () => {
         ok: true,
       }),
     ).toThrow();
-
-    expect(
-      contract.environmentActionResponseSchema.parse({
-        action: "pull_request_merge",
-        method: "squash",
-        message: "Pull request merge started",
-        ok: true,
-      }),
-    ).toMatchObject({
-      action: "pull_request_merge",
-      method: "squash",
-    });
-
-    expect(
-      contract.environmentActionResponseSchema.parse({
-        action: "pull_request_draft",
-        message: "Pull request converted to draft",
-        ok: true,
-      }),
-    ).toMatchObject({
-      action: "pull_request_draft",
-    });
 
     expect(
       updateEnvironmentRequestSchema.parse({
@@ -2205,7 +2038,6 @@ describe("server-contract clients", () => {
       queuedMessageListQuerySchema: contract.queuedMessageListQuerySchema,
       forkThreadRequestSchema: contract.forkThreadRequestSchema,
       environmentActionApiErrorSchema: contract.environmentActionApiErrorSchema,
-      environmentStatusResponseSchema: contract.environmentStatusResponseSchema,
       threadStorageFilesQuerySchema: contract.threadStorageFilesQuerySchema,
       projectFilesQuerySchema: contract.projectFilesQuerySchema,
       reorderPinnedThreadRequestSchema:
@@ -2227,6 +2059,10 @@ describe("server-contract clients", () => {
         contract.threadPendingInteractionsResponseSchema,
       threadTimelineQuerySchema: contract.threadTimelineQuerySchema,
       threadTimelineResponseSchema: contract.threadTimelineResponseSchema,
+      timelineDeltaSchema: contract.timelineDeltaSchema.omit({
+        upsertRows: true,
+        fields: true,
+      }),
       timelineTurnSummaryDetailsQuerySchema:
         contract.timelineTurnSummaryDetailsQuerySchema,
       resolvePendingInteractionRequestSchema:

@@ -47,6 +47,9 @@ does not prove reachability.
   bb machine resume <id-or-name>          Resume a machine (already active is a no-op)
   bb machine retry-cleanup <id-or-name>   Retry failed teardown now
   bb machine remove <id-or-name> [--yes]  Revoke and remove a machine
+    --force                               Finish removing a disconnected machine whose
+                                          environment cleanup failed; the provider's
+                                          removal still runs
   bb machine provider-cli status <machine>
   bb machine provider-cli install <machine> <provider-id>
     --action <install|update>
@@ -89,7 +92,14 @@ explicit request, not a timer: for a machine core records as suspended, it runs
 the provider's save-and-stop operation, and the CLI polls until completion.
 Active machines and lifecycle operations already in progress are left alone.
 Retry cleanup is accepted only for a retiring machine whose provider teardown
-failed.
+failed. `bb machine remove --force` / `hosts.delete({ hostId, force: true })`
+finishes removing a persistent machine that is disconnected and whose
+environment cleanup failed, for example because the computer no longer exists:
+it marks the machine's environments destroyed without running their teardown on
+the machine (files stay on its disk), then runs the provider's removal and
+revokes the machine. It is refused (409) while the machine is connected,
+before teardown has failed, or when no environment cleanup is blocking removal;
+use retry cleanup then.
 
 Machines installed from Settings run as launchd or systemd services with
 `--auto-update`: when the server is upgraded, each daemon updates its private
@@ -99,9 +109,11 @@ remove `--auto-update` from the launchd plist or systemd user unit and reload
 that service; foreground `bb-app host-daemon` runs leave it off unless you pass
 `--auto-update`.
 
-Service stdout and stderr are appended to `logs/server-stdio.log` and
-`logs/host-daemon-stdio.log` under the selected data directory, including
-startup errors. Follow them with `tail -F`.
+Application logs rotate in `logs/server.N.log` and `logs/host-daemon.N.log`
+under the selected data directory. Startup errors, crashes, and other output
+that bypasses the logger are appended to `logs/server-stdio.log` and
+`logs/host-daemon-stdio.log`; a file over 10 MB is renamed to `-stdio.1.log`
+when its service starts. Follow them with `tail -F`.
 
 Updates commands
 
@@ -117,13 +129,48 @@ CLI counterpart of Settings → Updates.
     --machine <id-or-name>                Limit to one machine
     --json                                Print per-target results as JSON
   bb updates app [status]                 Show whether bb can update itself, the available
-                                          version, and the last result
+                                          version, how long a source checkout has been
+                                          behind origin/main, and the last result
     --json                                Print the status as JSON
   bb updates app apply                    Download the update and restart bb into it
-    --yes                                 Interrupt running threads without asking
+    --yes                                 Update without asking about running threads
+    --when-idle                           Wait for running threads to finish instead
+                                          of interrupting them
     --no-wait                             Return once the update starts
     --json                                Print the final status as JSON
+  bb updates app cancel                   Skip a waiting update until a newer version
+                                          appears
+  bb updates app auto [on|off]            Show or set automatic updates: check every
+                                          hour and install once no thread has run
+                                          for 15 minutes
   bb updates app dismiss                  Mark the last update result as seen
+
+`--when-idle`, `cancel`, and `auto on|off` need the `updateWhenIdle` experiment (on for early
+adopters; `bb settings experiment updateWhenIdle true`); while it is off they
+fail with a message naming it. `bb updates app apply --when-idle` updates at
+once when no thread is running.
+Otherwise the server schedules the update and the command returns, so an agent
+can run it from its own thread; the server starts the update after every thread
+has stayed finished for a few seconds, and waits again if one starts during the
+download. The schedule lasts until bb restarts. `bb updates app auto on` (the
+"Restart and update bb automatically" switch on Settings → Updates) makes bb
+check for an update right away, 30 seconds after it starts, and every hour,
+and schedule what it finds, so it restarts into the update once no thread has
+run for 15 minutes (a requested update waits only a few seconds, and
+`apply --when-idle` while an automatic update waits shortens its wait to
+that); `off` stops the checks and drops a waiting update. It does not start a
+version whose last update attempt failed, or one you skipped with `cancel`,
+until a newer one appears; you can still update to it by hand. Without
+`--when-idle` or `--yes`,
+apply asks before interrupting running threads and fails without a terminal.
+Updating restarts bb, which interrupts running threads; with the
+`resumeThreadsAfterRestart` experiment on they resume after the update, and
+the prompt and the `threads_running` error say so.
+
+With `updateWhenIdle` on, once bb decides to restart into an update, new sends
+wait in the thread's queue (`sending after bb restarts to update` in
+`bb thread queue`) and go out after the restart, behind any resume; if the
+update is deferred, cancelled, or fails they go out at once.
 
 `bb updates app apply` also updates a server hosted by the desktop app, restarting
 that hosting app through its native updater. It never updates the desktop you

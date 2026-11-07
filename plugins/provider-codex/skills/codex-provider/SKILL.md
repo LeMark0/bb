@@ -1,14 +1,20 @@
 ---
 name: codex-provider
-description: "Diagnose BB-specific Codex session controls, model acceptance, and durable goals."
+description: "Diagnose BB-specific Codex session controls, MCP elicitation and Computer Use app access, model acceptance, and durable goals."
 ---
 
 # Codex provider
 
 Codex supports structured plan requests, editing and rerunning eligible messages,
 and compaction through the corresponding core `bb thread` commands.
-`bb thread clear-goal <id>` clears its durable active Goal and waits for provider
-confirmation. Inspect the thread before recovery actions.
+Stopping a running Codex thread pauses its active Goal, as Codex's own client
+does, so later messages and clearing do not restart it. Send `/goal resume`
+to make a paused, blocked, or usage-limited Goal active again; Codex starts
+working on it in that message's turn. `/goal pause` and `/goal clear` pause or
+remove the Goal without starting a turn, and any other `/goal` text goes to
+Codex as a normal prompt. `bb thread clear-goal <id>` also removes the
+thread's Goal, whatever its status, and waits for provider confirmation.
+Inspect the thread before recovery actions.
 
 Codex questions from `request_user_input` pause the turn until answered.
 Questions from `request_user_input_async` do not pause it: the plugin opens a
@@ -19,6 +25,31 @@ From the CLI, find it with `bb thread interactions list <thread>` and answer
 with `bb thread interactions respond <interactionId> <thread> --value
 '{"answers":{"question-1":{"selected":["option-2"]}}}'`. Questions and options
 are numbered from 1 in order; use `"freeText"` for a typed answer.
+
+Codex relays MCP elicitations (`mcpServer/elicitation/request`) as a
+`provider-codex/mcp-elicitation` interaction that pauses the turn. Every card
+names the requesting MCP server. Computer Use app access (only from Codex's
+`cua_repl` server; Computer Use metadata from any other server shows as a plain
+tool approval) shows the app name and native icon, keeps high-risk warnings
+visible, and offers Allow for this session or Always allow only when Codex
+offers that scope; Codex stores the grant. MCP tool-call approvals
+(`codex_approval_kind: "mcp_tool_call"`) show the tool and its arguments and
+offer Allow, plus Allow for this session or Always allow when Codex offers
+them. These are separate from macOS
+Accessibility and Screen Recording permissions. Standard forms accept text,
+numbers, integers, booleans, and single or multiple choices with defaults,
+required fields, and supported constraints; answers are validated in the UI
+and again before reaching Codex. URL requests show the destination and open
+only on user action; acceptance means the URL opened, not that the external
+flow finished. Unsupported schemas offer only Decline. Answer from the CLI with
+`bb thread interactions respond <interactionId> <thread> --value '<json>'`
+(SDK: `threads.interactions.respond`), passing
+`{"action":"accept","persist":"session"}` (or `"always"` when `scopes`
+includes it) for app access, `{"action":"accept"}` or an offered `persist` for
+tool approvals, `{"action":"accept","content":{...}}` for forms,
+`{"action":"accept"}` for URLs after the user opens them, or
+`{"action":"decline"}` / `{"action":"cancel"}`. Invalid responses never grant
+access. Stopping the turn answers the request with `cancel`.
 
 Unlisted model IDs are accepted by this provider; acceptance does not establish
 account access. Inspect models on the actual execution host with
@@ -49,7 +80,7 @@ current state is disabled in the picker. The `gpt-daybreak-*-latest` alias
 models leave the main list when the switch is available and stay selectable
 only on threads that already use them.
 
-## Per-thread context window
+## Per-thread and per-preset context windows
 
 The `contextWindowOverrides` setting gives selected threads a larger Codex
 context window. It is a JSON object keyed by bb thread id; each entry names the
@@ -62,13 +93,38 @@ bb plugin config provider-codex set contextWindowOverrides '{"thr_abc234defg":{"
 bb sends `contextWindow` as Codex `model_context_window` and
 `autoCompactTokenLimit` as `model_auto_compact_token_limit` when it starts or
 resumes that thread's session. An entry applies only while the thread runs the
-named model, so a model change falls back to the Codex defaults. Threads
-without an entry are unaffected, including children and reviewers in the same
-project or worktree, and forks or side chats, which get their own thread ids.
-Omit `autoCompactTokenLimit` to keep the Codex default compaction threshold; it
-must be below `contextWindow` when present.
-bb rejects malformed JSON, keys that are not bb thread ids, unknown fields and
-non-integer or non-positive token counts when the setting is saved.
+named model, so a model change falls back to the Codex defaults. Omit
+`autoCompactTokenLimit` to keep the Codex default compaction threshold; it must
+be below `contextWindow` when present. A thread id mapped to `null` keeps that
+thread on the defaults.
+
+`contextWindowPresets` takes the same entries keyed by Tasks preset id. It
+covers threads that Tasks started from that preset, with `bb tasks dispatch`
+or `bb tasks preset spawn`, which record the preset id on the thread:
+
+```sh
+bb plugin config provider-codex set contextWindowPresets '{"01M46H89SV62BXPZ3HMXKAE6MN":{"model":"gpt-6-astra","contextWindow":872000,"autoCompactTokenLimit":784800}}'
+```
+
+bb decides each command from the thread and then the threads it was forked
+from, nearest first, and uses the first decision it finds:
+
+- a `contextWindowOverrides` entry for that thread, or `null`;
+- otherwise the preset that thread was started from, if Tasks recorded one:
+  its `contextWindowPresets` entry, or the defaults when the preset has none.
+
+So forks and side chats inherit their source's window, a fork recorded under
+another preset or mapped to `null` stops inheritance, and children and
+reviewers, which are not forks, keep their own settings. A model mismatch at
+the deciding thread means the defaults; bb does not look further back. Threads
+started with `bb thread spawn` record no preset, so only a thread entry covers
+them; a title or prompt naming a preset does not. The recorded preset id is
+ordinary thread metadata that any local API client can rewrite, so treat it as
+provenance for configuration, not as an access control.
+
+bb rejects malformed JSON, keys that are not bb thread ids or Tasks preset ids,
+unknown fields and non-integer or non-positive token counts when either
+setting is saved.
 
 Choose the values from the model's entry in `codex debug models`. In the Codex
 0.162.1 catalogue, `gpt-6-astra` has a 272000-token `context_window`, a
@@ -86,11 +142,15 @@ succeed; check `bb thread context <id>` after the next turn rather than
 treating the setting as proof.
 
 A change reaches a running thread at its next turn: bb rebuilds the Codex
-session on the same provider thread, keeping the conversation. Remove the
-entry, or run `bb plugin config provider-codex unset contextWindowOverrides`,
-to return to the defaults the same way. Before returning a thread to the
-default window, make sure its context is below the default reported window or
-compact it first.
+session on the same provider thread, keeping the conversation. Map a thread
+to `null` to put it on the defaults the same way. Removing a thread's entry,
+or unsetting a setting with
+`bb plugin config provider-codex unset contextWindowOverrides` (or
+`contextWindowPresets`), hands each affected thread back to the rest of the
+resolution order: its fork source or recorded preset may still give it a
+larger window, and only a thread with no other decision returns to the
+defaults. Before returning a thread to the default window, make sure its
+context is below the default reported window or compact it first.
 
 Use the core CLI skill for command syntax and official Codex guidance for
 upstream product behavior.

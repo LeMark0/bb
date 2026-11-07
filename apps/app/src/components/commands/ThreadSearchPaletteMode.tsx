@@ -15,20 +15,12 @@ import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { Icon } from "@bb/shared-ui/icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@bb/shared-ui/tooltip";
 import { cn } from "@bb/shared-ui/lib/utils";
-import {
-  resolveThreadListIndicator,
-  threadListIndicatorStateForThread,
-} from "@bb/client-core";
-import { usePromptDraftHasInput } from "@/hooks/usePromptDraftStorage";
+import { useThreadListEntryStatus } from "@/hooks/useThreadListEntryStatus";
 import {
   highlightedText,
   ThreadTitle,
 } from "@/components/thread/ThreadTitleMentions";
-import {
-  ThreadStatusGlyph,
-  resolveThreadStatus,
-} from "@/components/thread/ThreadStatusGlyph";
-import { usePluginThreadRowStatus } from "@/lib/plugin-thread-row-status";
+import { ThreadStatusGlyph } from "@/components/thread/ThreadStatusGlyph";
 import { THREAD_LIFECYCLE_OPTIONS } from "@/components/thread/ThreadLifecycleFilter";
 import {
   paletteThreadLifecyclesAtom,
@@ -466,9 +458,10 @@ export function ThreadSearchPaletteMode({
                         : `${option.row.id}:${option.row.primaryText}`
                     }
                     className={cn(
-                      "flex min-w-0 items-center rounded-md",
+                      "flex min-w-0 cursor-pointer select-none items-center rounded-md",
                       index === activeIndex && "bg-state-hover text-foreground",
                     )}
+                    onClick={() => selectOption(option, index)}
                     onPointerMove={() => highlightOption(index)}
                   >
                     <div
@@ -483,12 +476,11 @@ export function ThreadSearchPaletteMode({
                             : "Show more threads"
                       }
                       className={cn(
-                        "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-2 py-1.5",
+                        "flex min-w-0 flex-1 items-center rounded-md px-2 py-1.5",
                         option.row === null
                           ? "gap-1.5 text-xs text-subtle-foreground"
                           : "min-h-11 gap-3 text-left text-sm",
                       )}
-                      onClick={() => selectOption(option, index)}
                     >
                       {option.row === null ? (
                         <>
@@ -517,7 +509,10 @@ export function ThreadSearchPaletteMode({
                           "ml-4 mr-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-sm px-1 text-xs text-subtle-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring",
                           (index !== activeIndex || !canSplit) && "invisible",
                         )}
-                        onClick={() => selectOption(option, index, true)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          selectOption(option, index, true);
+                        }}
                       >
                         <span className="mr-1">Open in split</span>
                         <PaletteShortcut>{`${splitModifier} ↵`}</PaletteShortcut>
@@ -642,16 +637,7 @@ function PaletteMatchText({
 }
 
 function ThreadSearchPaletteStatus({ row }: { row: PaletteThreadSearchRow }) {
-  const hasUnsubmittedDraft = usePromptDraftHasInput({
-    kind: "thread",
-    projectId: row.projectId,
-    threadId: row.threadId,
-  });
-  const indicator = resolveThreadListIndicator(
-    threadListIndicatorStateForThread(row.thread, hasUnsubmittedDraft),
-  );
-  const rowStatus = usePluginThreadRowStatus(row.threadId);
-  const { accessibleLabel: label } = resolveThreadStatus(indicator, rowStatus);
+  const { indicator, rowStatus, label } = useThreadListEntryStatus(row.thread);
   if (label === null) return null;
   return (
     <>

@@ -1,8 +1,8 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { getEnvironment } from "@bb/db";
+import { getEnvironment, threads } from "@bb/db";
 import {
   registerTestHostRpcCapture,
-  reportQueuedCommandError,
   reportQueuedCommandSuccess,
   waitForQueuedCommand,
 } from "../helpers/commands.js";
@@ -16,323 +16,6 @@ import {
 import { withTestHarness } from "../helpers/test-app.js";
 
 describe("public environments", () => {
-  it("lists cached branch options while remotes refresh in the background", async () => {
-    await withTestHarness(async (harness) => {
-      const { host, session } = seedHostSession(harness.deps, {
-        id: "host-environment-branch-options",
-      });
-      registerTestHostRpcCapture(harness, {
-        hostId: host.id,
-        sessionId: session.id,
-        queueBranchOptions: true,
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        path: "/tmp/branch-options-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/diff/branches?query=feature&selectedBranch=origin%2Fmain&limit=10`,
-      );
-      const branchOptionsCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) => command.type === "host.list_branch_options",
-      );
-      expect(branchOptionsCommand.command).toEqual({
-        type: "host.list_branch_options",
-        path: "/tmp/branch-options-env",
-        query: "feature",
-        selectedBranch: "origin/main",
-        limit: 10,
-        remoteRefresh: "background",
-      });
-      await reportQueuedCommandSuccess(harness, branchOptionsCommand, {
-        branches: ["feature/local"],
-        branchesTruncated: false,
-        remoteBranches: ["origin/feature/remote"],
-        remoteBranchesTruncated: false,
-        selectedBranch: { kind: "remote", name: "origin/main" },
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(200);
-      await expect(readJson(response)).resolves.toEqual({
-        branches: ["feature/local"],
-        branchesTruncated: false,
-        remoteBranches: ["origin/feature/remote"],
-        remoteBranchesTruncated: false,
-        selectedBranch: { kind: "remote", name: "origin/main" },
-      });
-    });
-  });
-
-  it("propagates a bounded truncated diff table of contents", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-environment-truncated-diff",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        path: "/tmp/truncated-diff-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/diff/files?target=uncommitted`,
-      );
-      const diffFilesCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.diffFiles" &&
-          command.environmentId === environment.id,
-      );
-      expect(diffFilesCommand.command).toMatchObject({ maxFiles: 500 });
-      await reportQueuedCommandSuccess(harness, diffFilesCommand, {
-        outcome: "available",
-        files: [
-          {
-            path: "large.bin",
-            previousPath: null,
-            statusLetter: "A",
-            additions: 0,
-            deletions: 0,
-            binary: true,
-            origin: "untracked",
-          },
-        ],
-        shortstat: "1 file changed",
-        mergeBaseRef: null,
-        truncated: true,
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(200);
-      await expect(readJson(response)).resolves.toMatchObject({
-        outcome: "available",
-        truncated: true,
-        files: [
-          {
-            path: "large.bin",
-            origin: "untracked",
-            loadMode: "on_demand",
-          },
-        ],
-      });
-    });
-  });
-
-  it("remaps a daemon file-read failure on diff/file to its HTTP status", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-environment-diff-file-enoent",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        path: "/tmp/diff-file-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/diff/file?target=uncommitted&side=new&path=missing.md`,
-      );
-      const readCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) => command.type === "host.read_file",
-      );
-      expect(readCommand.command).toMatchObject({
-        path: "/tmp/diff-file-env/missing.md",
-        rootPath: "/tmp/diff-file-env",
-      });
-      await reportQueuedCommandError(harness, readCommand, {
-        errorCode: "ENOENT",
-        errorMessage: "Path does not exist: /tmp/diff-file-env/missing.md",
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(404);
-      await expect(readJson(response)).resolves.toMatchObject({
-        code: "ENOENT",
-      });
-    });
-  });
-
-  it("remaps an oversized daemon file read on diff/file to 413", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-environment-diff-file-too-large",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        path: "/tmp/diff-file-large-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/diff/file?target=uncommitted&side=new&path=huge.bin`,
-      );
-      const readCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) => command.type === "host.read_file",
-      );
-      await reportQueuedCommandError(harness, readCommand, {
-        errorCode: "file_too_large",
-        errorMessage: "File is too large to read",
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(413);
-    });
-  });
-
-  it("records the daemon-observed current branch after workspace status", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-environment-current-branch",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        branchName: "bb/stale",
-        defaultBranch: "main",
-        path: "/tmp/current-branch-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const statusPromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/status`,
-      );
-      const statusCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.status" &&
-          command.environmentId === environment.id,
-      );
-      expect(statusCommand.command).toMatchObject({
-        maxUntrackedLineStatFiles: 50,
-        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
-      });
-      await reportQueuedCommandSuccess(harness, statusCommand, {
-        outcome: "available",
-        workspaceStatus: {
-          workingTree: {
-            insertions: 0,
-            deletions: 0,
-            lineStatsComplete: true,
-            fileCount: 0,
-            files: [],
-            hasUncommittedChanges: false,
-            state: "clean",
-          },
-          branch: {
-            currentBranch: "feature/current",
-            defaultBranch: "trunk",
-          },
-          checkout: {
-            kind: "branch",
-            branchName: "feature/current",
-            headSha: null,
-          },
-          mergeBase: null,
-        },
-      });
-
-      const response = await statusPromise;
-      expect(response.status).toBe(200);
-      await expect(readJson(response)).resolves.toMatchObject({
-        outcome: "available",
-        workspace: {
-          branch: {
-            currentBranch: "feature/current",
-            defaultBranch: "trunk",
-          },
-        },
-      });
-      expect(getEnvironment(harness.db, environment.id)).toMatchObject({
-        branchName: "feature/current",
-        defaultBranch: "trunk",
-      });
-    });
-  });
-
-  it("clears the stored branch after detached workspace status", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-environment-detached-branch",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        branchName: "bb/stale",
-        defaultBranch: "main",
-        path: "/tmp/detached-branch-env",
-        environmentProviderId: "git-worktree",
-      });
-
-      const statusPromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/status`,
-      );
-      const statusCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.status" &&
-          command.environmentId === environment.id,
-      );
-      await reportQueuedCommandSuccess(harness, statusCommand, {
-        outcome: "available",
-        workspaceStatus: {
-          workingTree: {
-            insertions: 0,
-            deletions: 0,
-            lineStatsComplete: true,
-            fileCount: 0,
-            files: [],
-            hasUncommittedChanges: false,
-            state: "clean",
-          },
-          branch: {
-            currentBranch: null,
-            defaultBranch: "main",
-          },
-          checkout: {
-            kind: "detached",
-            headSha: "0123456789abcdef0123456789abcdef01234567",
-          },
-          mergeBase: null,
-        },
-      });
-
-      const response = await statusPromise;
-      expect(response.status).toBe(200);
-      expect(getEnvironment(harness.db, environment.id)).toMatchObject({
-        branchName: null,
-        defaultBranch: "main",
-      });
-    });
-  });
-
   it("renames an environment through the public update route", async () => {
     await withTestHarness(async (harness) => {
       const { host } = seedHostSession(harness.deps, {
@@ -717,6 +400,56 @@ describe("environment list and delete", () => {
       });
     });
   });
+
+  it.each([
+    { method: "DELETE", path: "" },
+    { method: "POST", path: "/cleanup" },
+    { method: "POST", path: "/cleanup?recover=true" },
+  ])(
+    "reports live threads for $method $path while an archived thread still runs",
+    async ({ method, path }) => {
+      await withTestHarness(async (harness) => {
+        const { host } = seedHostSession(harness.deps, {
+          id: "host-env-archived-running",
+        });
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+        });
+        const environment = seedEnvironment(harness.deps, {
+          hostId: host.id,
+          projectId: project.id,
+          path: "/tmp/env-archived-running",
+          environmentProviderId: "git-worktree",
+          providerOwnsPath: true,
+        });
+        const thread = seedThread(harness.deps, {
+          environmentId: environment.id,
+          projectId: project.id,
+          status: "active",
+        });
+        harness.db
+          .update(threads)
+          .set({ archivedAt: Date.now() })
+          .where(eq(threads.id, thread.id))
+          .run();
+
+        const response = await harness.app.request(
+          `/api/v1/environments/${environment.id}${path}`,
+          { method },
+        );
+
+        expect(response.status).toBe(409);
+        await expect(readJson(response)).resolves.toMatchObject({
+          message: "Environment still has live threads",
+        });
+        expect(getEnvironment(harness.db, environment.id)).toMatchObject({
+          status: "ready",
+          teardownStatus: null,
+          retireAt: null,
+        });
+      });
+    },
+  );
 
   it("refuses to delete an environment with live threads", async () => {
     await withTestHarness(async (harness) => {

@@ -77,6 +77,13 @@ describe("public project attachments", () => {
         expect(content.headers.get("content-length")).toBe(
           String(fixture.bytes.byteLength),
         );
+        const partial = await harness.app.request(contentUrl, {
+          headers: { range: "bytes=0-1" },
+        });
+        expect(partial.status).toBe(206);
+        expect(new Uint8Array(await partial.arrayBuffer())).toEqual(
+          fixture.bytes.subarray(0, 2),
+        );
         const etag = content.headers.get("etag");
         expect(etag).toMatch(/^"[^"]+"$/u);
         const revalidated = await harness.app.request(contentUrl, {
@@ -122,9 +129,13 @@ describe("public project attachments", () => {
       const oversizedFile = await upload(
         harness.app,
         project.id,
-        new File([new Uint8Array(35 * 1024 * 1024 + 512 * 1024)], "huge-archive.bin", {
-          type: "application/octet-stream",
-        }),
+        new File(
+          [new Uint8Array(35 * 1024 * 1024 + 512 * 1024)],
+          "huge-archive.bin",
+          {
+            type: "application/octet-stream",
+          },
+        ),
       );
       expect(oversizedFile.status).toBe(400);
       await expect(readJson(oversizedFile)).resolves.toEqual({
@@ -144,6 +155,36 @@ describe("public project attachments", () => {
         message:
           'Attachment upload accepts exactly one multipart field named "file"',
       });
+    });
+  });
+
+  it("rejects an empty or malformed multipart body as invalid_request", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-project-attachment-malformed",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+
+      for (const body of ["", "not a multipart body"]) {
+        const response = await harness.app.request(
+          `/api/v1/projects/${project.id}/attachments`,
+          {
+            body,
+            headers: {
+              "content-type":
+                "multipart/form-data; boundary=----WebKitFormBoundaryabc",
+            },
+            method: "POST",
+          },
+        );
+        expect(response.status).toBe(400);
+        await expect(readJson(response)).resolves.toEqual({
+          code: "invalid_request",
+          message: "Request body is not valid multipart form data",
+        });
+      }
     });
   });
 

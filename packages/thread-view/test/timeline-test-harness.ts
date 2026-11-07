@@ -205,6 +205,7 @@ interface CommandCompletedArgs extends ProviderTurnEventOptions {
   approvalStatus?: "waiting_for_approval" | "denied" | null;
   command: string;
   cwd?: string;
+  description?: string;
   exitCode?: number;
   itemId?: string;
   presentation?: ThreadEventItemPresentation;
@@ -244,6 +245,7 @@ interface FileChangeCompletedArgs extends ProviderTurnEventOptions {
     kind: "add" | "delete" | "update";
     path: string;
   }>;
+  error?: string;
   itemId?: string;
   status?: "pending" | "completed" | "failed" | "interrupted";
 }
@@ -252,6 +254,10 @@ type FileChangeStartedArgs = FileChangeCompletedArgs;
 
 interface ContextCompactionArgs extends ProviderTurnEventOptions {
   itemId?: string;
+}
+
+interface TurnMainRunUpdatedArgs extends ProviderTurnEventOptions {
+  state: "idle" | "running";
 }
 
 interface TurnPlanUpdatedArgs extends ProviderTurnEventOptions {
@@ -441,6 +447,9 @@ export interface TimelineEventFactory {
       status?: "completed" | "failed" | "interrupted";
     },
   ): ThreadEventRowOfType<"turn/completed">;
+  turnMainRunUpdated(
+    args: TurnMainRunUpdatedArgs,
+  ): ThreadEventRowOfType<"turn/mainRun/updated">;
   turnPlanUpdated(
     args: TurnPlanUpdatedArgs,
   ): ThreadEventRowOfType<"turn/plan/updated">;
@@ -732,6 +741,7 @@ export function createTimelineEventFactory(
             id: args.itemId ?? `command-${base.seq}`,
             command: args.command,
             cwd: args.cwd ?? "/repo",
+            ...(args.description ? { description: args.description } : {}),
             aggregatedOutput: args.aggregatedOutput,
             exitCode: args.exitCode,
             status: args.status ?? "completed",
@@ -766,6 +776,7 @@ export function createTimelineEventFactory(
             id: args.itemId ?? `command-${base.seq}`,
             command: args.command,
             cwd: args.cwd ?? "/repo",
+            ...(args.description ? { description: args.description } : {}),
             aggregatedOutput: args.aggregatedOutput,
             exitCode: args.exitCode,
             status: args.status ?? "pending",
@@ -828,6 +839,7 @@ export function createTimelineEventFactory(
             changes: args.changes,
             status: args.status ?? "completed",
             approvalStatus: args.approvalStatus ?? null,
+            ...(args.error === undefined ? {} : { error: args.error }),
           },
         },
       };
@@ -1277,6 +1289,17 @@ export function createTimelineEventFactory(
         },
       };
     },
+    turnMainRunUpdated(args) {
+      const base = nextProviderTurnScopedRowBase("turn-main-run-updated", args);
+      return {
+        ...base,
+        type: "turn/mainRun/updated",
+        data: {
+          ...providerFields(args),
+          state: args.state,
+        },
+      };
+    },
     turnPlanUpdated(args) {
       const base = nextProviderTurnScopedRowBase("turn-plan-updated", args);
       return {
@@ -1483,6 +1506,7 @@ export function renderTimelineFixture(
     includeDiagnosticOperations:
       args.projectionOptions.includeDiagnosticOperations ?? false,
     isLatestPage: true,
+    summarizeShellCommands: true,
     threadStatus: args.projectionOptions.threadStatus ?? "idle",
     threadName: args.projectionOptions.threadName ?? "",
     workspaceRoot: null,

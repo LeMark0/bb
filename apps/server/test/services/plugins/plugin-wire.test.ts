@@ -1,6 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import WebSocket, { type ClientOptions, type RawData } from "ws";
 import {
   createTestAppHarness,
@@ -14,12 +23,17 @@ const BASE = "http://127.0.0.1:3334";
 const EVIL_ORIGIN = "https://evil.example";
 
 const WIRE_SOURCE = `
-  import { defineRpcContract } from "@get-bb/plugin-sdk";
+  import { defineRpcContract, experimental_PluginRpcRefusal } from "@get-bb/plugin-sdk";
   import { z } from "zod";
   const rpcContract = defineRpcContract({
     echo: {
       input: z.object({ x: z.number().optional(), kept: z.boolean().optional() }),
       output: z.object({ echoed: z.unknown() }),
+    },
+    refuse: {
+      input: z.enum(["forbidden", "not_found", "conflict", "invalid"]),
+      output: z.null(),
+      invalidates: () => ["private"],
     },
     boom: { input: z.record(z.string(), z.unknown()), output: z.null() },
     publish: {
@@ -32,6 +46,13 @@ const WIRE_SOURCE = `
     cyclicResult: { input: z.null(), output: z.any() },
     nonFiniteResult: { input: z.null(), output: z.any() },
     validated: { input: z.object({ value: z.string().min(1) }), output: z.string() },
+    tagged: {
+      input: z.object({ id: z.string() }),
+      output: z.record(z.string(), z.number()),
+      tags: (input: any) => ["item:" + input.id],
+      keyTags: (key: string) => ["row:" + key],
+      invalidates: (input: any) => ["item:" + input.id],
+    },
   });
   export default function plugin(bb: any) {
     bb.http.route("GET", "/hello", (c: any) => c.json({ message: "hello v1" }));
@@ -48,8 +69,6 @@ const WIRE_SOURCE = `
     bb.http.route("GET", "/boom", () => {
       throw new Error("route boom");
     });
-    // A structurally valid Response whose prototype is not this realm's
-    // Response, as a handler running in another realm would return (#1661).
     bb.http.route("GET", "/foreign", () => {
       const real = new Response(JSON.stringify({ foreign: true }), {
         status: 201,
@@ -65,8 +84,6 @@ const WIRE_SOURCE = `
         clone: () => real.clone(),
       };
     });
-    // Streams two chunks; the second is only produced after the test releases
-    // it, so buffering the whole body would hang the first read.
     bb.http.route("GET", "/foreign-stream", () => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
@@ -119,7 +136,11 @@ const WIRE_SOURCE = `
       },
     }), { auth: "none" });
     bb.rpc.register(rpcContract, {
+      refuse: async (code: any) => {
+        throw new experimental_PluginRpcRefusal({ code, message: "Cannot change this item", issues: [{ path: ["id"], message: "Unavailable" }] });
+      },
       echo: async (input: any) => ({ echoed: input }),
+      tagged: async () => ({ a: 1 }),
       boom: async () => {
         throw new Error("rpc boom");
       },
@@ -169,6 +190,37 @@ async function writePlugin(
   return rootDir;
 }
 
+let wireFixture: TestAppHarness;
+let wireRoot: string;
+
+beforeAll(async () => {
+  wireFixture = await createTestAppHarness({ devAppPort: 5173 });
+  wireRoot = await writePlugin(join(wireFixture.config.dataDir, "fixtures"), {
+    name: "bb-plugin-wire",
+    serverSource: WIRE_SOURCE,
+  });
+  const entry = await wireFixture.pluginService.installPath(wireRoot);
+  expect(entry.status).toBe("running");
+  await wireFixture.pluginService.stop();
+});
+
+afterAll(async () => {
+  await wireFixture.cleanup();
+});
+
+async function installWireFixture(harness: TestAppHarness): Promise<string> {
+  await writeFile(join(wireRoot, "server.ts"), WIRE_SOURCE);
+  await mkdir(join(harness.config.dataDir, "plugins", "runtime"), {
+    recursive: true,
+  });
+  await cp(
+    join(wireFixture.config.dataDir, "plugins", "runtime", "server"),
+    join(harness.config.dataDir, "plugins", "runtime", "server"),
+    { recursive: true },
+  );
+  return wireRoot;
+}
+
 async function rpc(
   harness: TestAppHarness,
   method: string,
@@ -196,10 +248,7 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
 
   beforeEach(async () => {
     harness = await createTestAppHarness({ devAppPort: 5173 });
-    rootDir = await writePlugin(join(harness.config.dataDir, "fixtures"), {
-      name: "bb-plugin-wire",
-      serverSource: WIRE_SOURCE,
-    });
+    rootDir = await installWireFixture(harness);
     const entry = await harness.pluginService.installPath(rootDir);
     expect(entry.status).toBe("running");
   });
@@ -572,7 +621,10 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
   it("rpc: happy path, handler error → 500 envelope, unknown method → 404", async () => {
     const ok = await rpc(harness, "echo", { x: 1 });
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ ok: true, result: { echoed: { x: 1 } } });
+    expect(await ok.json()).toEqual({
+      ok: true,
+      result: { echoed: { x: 1 } },
+    });
 
     const boom = await rpc(harness, "boom", {});
     expect(boom.status).toBe(500);
@@ -581,6 +633,12 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
       error: { code: "handler_error", message: "rpc boom" },
     });
 
+    expect(
+      harness.pluginService.list().find((p) => p.id === "wire"),
+    ).toMatchObject({
+      handlerStats: { errorCount: 1 },
+      statusDetail: "rpc boom failed: rpc boom",
+    });
     const missing = await rpc(harness, "missing", {});
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({
@@ -591,6 +649,47 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
       },
     });
   });
+
+  it("rpc: a built plugin still declaring the retired invalidates returns only ok and result and still broadcasts its tags", async () => {
+    const changed = vi.spyOn(harness.hub, "notifyPluginChanged");
+    const response = await rpc(harness, "tagged", { id: "x" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, result: { a: 1 } });
+    expect(changed).toHaveBeenCalledWith("wire", ["item:x"]);
+  });
+
+  it.each([
+    ["forbidden", 403],
+    ["not_found", 404],
+    ["conflict", 409],
+    ["invalid", 422],
+  ])(
+    "rpc refusal %s returns %s without crash accounting or invalidation",
+    async (code, status) => {
+      const changed = vi.spyOn(harness.hub, "notifyPluginChanged");
+      const before = harness.pluginService.list().find((p) => p.id === "wire");
+      const response = await rpc(harness, "refuse", code);
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: {
+          code,
+          message: "Cannot change this item",
+          issues: [{ path: ["id"], message: "Unavailable" }],
+        },
+      });
+      const after = harness.pluginService.list().find((p) => p.id === "wire");
+      expect(after?.handlerStats.count).toBe(
+        (before?.handlerStats.count ?? 0) + 1,
+      );
+      expect(after?.handlerStats.errorCount).toBe(
+        before?.handlerStats.errorCount,
+      );
+      expect(after?.statusDetail).toBe(before?.statusDetail);
+      expect(changed).not.toHaveBeenCalled();
+      changed.mockRestore();
+    },
+  );
 
   it("rpc rejects invalid input before invocation and rejects invalid output", async () => {
     delete (globalThis as Record<string, unknown>).__validatedRpcCalls;
@@ -673,7 +772,10 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
       payload: { count: 42 },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, result: "published" });
+    expect(await response.json()).toEqual({
+      ok: true,
+      result: "published",
+    });
 
     for (const socket of [systemSocket, threadSocket]) {
       expect(socket.messages).toHaveLength(1);
@@ -828,10 +930,7 @@ describe("plugin WebSocket routes", () => {
 
   beforeEach(async () => {
     server = await startTestServer({ devAppPort: 5173 });
-    rootDir = await writePlugin(join(server.config.dataDir, "fixtures"), {
-      name: "bb-plugin-wire",
-      serverSource: WIRE_SOURCE,
-    });
+    rootDir = await installWireFixture(server);
     const entry = await server.pluginService.installPath(rootDir);
     expect(entry.status).toBe("running");
   });

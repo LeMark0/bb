@@ -29,22 +29,41 @@ function providerOptions(
     model: "claude-sonnet-5",
     permissionMode: "accept-edits",
     settings,
+    experimental_lineage: [],
   });
 }
 
 describe("the Claude Code provider settings", () => {
-  it.each(["chromeEnabled", "disable1MContext"])(
-    "keeps %s off by default and derives an explicit opt-in",
-    (key) => {
-      const { declaration, host } = loadClaudeCodePlugin();
+  it.each([
+    "chromeEnabled",
+    "disable1MContext",
+    "artifactsEnabled",
+    "fullAccessApprovalsEnabled",
+  ])("keeps %s off by default and derives an explicit opt-in", (key) => {
+    const { declaration, host } = loadClaudeCodePlugin();
 
-      expect(host.harness.registrations.settingsDescriptors[key]).toMatchObject(
-        { type: "boolean", default: false },
-      );
-      expect(providerOptions(declaration, {})[key]).toBe(false);
-      expect(providerOptions(declaration, { [key]: true })[key]).toBe(true);
-    },
-  );
+    expect(host.harness.registrations.settingsDescriptors[key]).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+    expect(providerOptions(declaration, {})[key]).toBe(false);
+    expect(providerOptions(declaration, { [key]: true })[key]).toBe(true);
+  });
+
+  it("titles Bash rows with Claude's descriptions by default and derives an explicit opt-out", () => {
+    const { declaration, host } = loadClaudeCodePlugin();
+
+    expect(
+      host.harness.registrations.settingsDescriptors.commandDescriptionsEnabled,
+    ).toMatchObject({ type: "boolean", default: true });
+    expect(providerOptions(declaration, {}).commandDescriptionsEnabled).toBe(
+      true,
+    );
+    expect(
+      providerOptions(declaration, { commandDescriptionsEnabled: false })
+        .commandDescriptionsEnabled,
+    ).toBe(false);
+  });
 
   it("keeps the Claude Code sandbox on by default and derives an explicit opt-out", () => {
     const { declaration, host } = loadClaudeCodePlugin();
