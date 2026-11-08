@@ -17,7 +17,7 @@ import {
 import { useTasksNavigation } from "../../shell/routes.js";
 import { TasksEditor } from "../../editor/tasks-editor.js";
 import { TaskActivity } from "../activity/task-activity.js";
-import { AttachmentsGrid, uploadAttachment } from "./attachments.js";
+import { TaskAttachments, uploadAttachment } from "./attachments.js";
 import {
   createDescriptionSaver,
   type DescriptionSaver,
@@ -207,7 +207,6 @@ function TaskDetail({ task }: { task: Task }) {
   const delegationRpc = useRpc<DelegationRpcContract>();
   const navigation = useTasksNavigation();
   const { toasts, push, dismiss } = useDetailToasts();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const subtasksRef = useRef<HTMLElement>(null);
 
   const [draft, setDraft] = useState<{ taskId: string; markdown: string }>();
@@ -318,15 +317,23 @@ function TaskDetail({ task }: { task: Task }) {
     return uploadAttachment(file, { taskId: task.id });
   };
 
-  const onPickFiles = async (files: FileList | null) => {
-    for (const file of files ?? []) {
+  const uploadPickedFiles = async (files: File[]): Promise<string[]> => {
+    const uploadedIds: string[] = [];
+    for (const file of files) {
       try {
-        await uploadAttachment(file, { taskId: task.id });
+        const { attachmentId } = await uploadAttachment(file, {
+          taskId: task.id,
+        });
+        uploadedIds.push(attachmentId);
       } catch (error) {
         push(errorMessage(error));
       }
     }
+    return uploadedIds;
   };
+  const taskAttachments =
+    attachments.data?.filter((attachment) => attachment.taskId === task.id) ??
+    [];
 
   const createSubtask = async (title: string): Promise<boolean> => {
     try {
@@ -416,39 +423,21 @@ function TaskDetail({ task }: { task: Task }) {
             onOpenThread={(threadId) => navigate.toThread(threadId)}
           />
 
-          <div className="mb-1 mt-3 flex items-center gap-1">
-            <button
-              type="button"
-              title="Reactions coming soon"
-              aria-label="Add reaction"
-              disabled
-              className="flex size-6.5 items-center justify-center rounded-md text-muted-foreground opacity-50"
-            >
-              <HugeiconsIcon icon={SmilePlusIcon} className="size-4" />
-            </button>
-            <button
-              type="button"
-              title="Attach file"
-              aria-label="Attach file"
-              className="flex size-6.5 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Icon name="Paperclip" className="size-4" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                void onPickFiles(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </div>
-
-          <AttachmentsGrid
-            attachments={attachments.data ?? []}
+          <TaskAttachments
+            key={task.id}
+            leading={
+              <button
+                type="button"
+                title="Reactions coming soon"
+                aria-label="Add reaction"
+                disabled
+                className="flex size-6.5 items-center justify-center rounded-md text-muted-foreground opacity-50"
+              >
+                <HugeiconsIcon icon={SmilePlusIcon} className="size-4" />
+              </button>
+            }
+            attachments={taskAttachments}
+            onUpload={uploadPickedFiles}
             onRemove={async (attachment) => {
               const result = await rpc.call("deleteAttachment", {
                 attachmentId: attachment.id,
