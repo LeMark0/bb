@@ -218,6 +218,7 @@ if (script?.launchLogPath) {
       args: process.argv.slice(2),
       poolToken: process.env.CODEX_POOL_AUTH_TOKEN ?? null,
       codexHome: process.env.CODEX_HOME ?? null,
+      ownerThreadId: process.env.BB_THREAD_ID ?? null,
     })}\n`,
   );
 }

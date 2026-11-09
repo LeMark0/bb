@@ -580,6 +580,18 @@ describe("buildCodexConfig", () => {
     });
   });
 
+  it("keeps the thread's own BB_THREAD_ID in the shell environment over a contributed one", () => {
+    const config = configFor({
+      ...FULL_OPTIONS,
+      envVars: { BB_THREAD_ID: "thr_supplied", TEST_VAR: "123" },
+    });
+
+    expect(config).toMatchObject({
+      "shell_environment_policy.set.BB_THREAD_ID": "bb-thread-1",
+      "shell_environment_policy.set.TEST_VAR": "123",
+    });
+  });
+
   it("maps the reasoning level onto model_reasoning_effort", () => {
     expect(
       configFor({ ...FULL_OPTIONS, reasoningLevel: "high" }),

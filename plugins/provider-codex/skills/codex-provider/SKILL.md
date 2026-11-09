@@ -152,5 +152,16 @@ larger window, and only a thread with no other decision returns to the
 defaults. Before returning a thread to the default window, make sure its
 context is below the default reported window or compact it first.
 
+## Hooks and the thread ID
+
+bb starts a separate Codex app-server for each thread and sets `BB_THREAD_ID`
+to that thread's ID in its environment, after removing any inherited `BB_`
+variables. Codex hooks inherit it, so a hook script can tell which bb thread it
+runs for; shell commands receive the same value. A `BB_THREAD_ID` in
+contributed environment variables replaces neither. App-servers bb starts for
+other work, such as listing models, have no `BB_THREAD_ID`. An app-server that
+was already running keeps its old environment until bb starts a new one for
+that thread.
+
 Use the core CLI skill for command syntax and official Codex guidance for
 upstream product behavior.
