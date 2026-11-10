@@ -1,0 +1,11 @@
+.plan-map-root .viewer-area:has(> .empty-map) {
+  overflow-y: auto;
+}
+
+.plan-map-root .empty-map [data-init-actions] p[data-bind-error] {
+  color: var(--destructive-text);
+}
+
+.plan-map-root .empty-map [data-init-actions] input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
