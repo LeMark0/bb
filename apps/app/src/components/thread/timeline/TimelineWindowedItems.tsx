@@ -414,22 +414,35 @@ export function TimelineWindowedItems({
     [getObserver, record],
   );
 
-  const frameUpdatesRef = useRef({ count: 0, frame: null as number | null });
+  const syncWindowRef = useRef<(urgent: boolean) => void>(() => undefined);
+  const frameUpdatesRef = useRef({
+    count: 0,
+    frame: null as number | null,
+    retry: false,
+  });
   const takeFrameUpdate = useCallback((): boolean => {
     const budget = frameUpdatesRef.current;
     if (budget.frame === null) {
       budget.frame = requestAnimationFrame(() => {
         budget.frame = null;
         budget.count = 0;
+        if (!budget.retry) return;
+        budget.retry = false;
+        syncWindowRef.current(false);
       });
     }
     budget.count += 1;
-    return budget.count <= MAX_WINDOW_UPDATES_PER_FRAME;
+    if (budget.count <= MAX_WINDOW_UPDATES_PER_FRAME) return true;
+    budget.retry = true;
+    return false;
   }, []);
   useLayoutEffect(
     () => () => {
-      const frame = frameUpdatesRef.current.frame;
-      if (frame !== null) cancelAnimationFrame(frame);
+      const budget = frameUpdatesRef.current;
+      if (budget.frame !== null) cancelAnimationFrame(budget.frame);
+      budget.frame = null;
+      budget.count = 0;
+      budget.retry = false;
     },
     [],
   );
@@ -510,6 +523,9 @@ export function TimelineWindowedItems({
     },
     [measurements, positionKeeper, renderedModel, takeFrameUpdate],
   );
+  useLayoutEffect(() => {
+    syncWindowRef.current = syncWindow;
+  }, [syncWindow]);
 
   useLayoutEffect(() => {
     if (positionKeeper === null) return;
