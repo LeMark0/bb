@@ -22,6 +22,10 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 function keys(count: number, prefix = "row"): string[] {
   return Array.from({ length: count }, (_, index) => `${prefix}-${index}`);
 }
@@ -429,5 +433,61 @@ describe("TimelineWindowedItems", () => {
     expect(harness.list.querySelector('[data-timeline-row-id="row-18"]')).toBe(
       element,
     );
+  });
+
+  it("covers the latest scroll position on the next frame after a burst of jumps exhausts the frame's window updates", async () => {
+    const harness = setup({ attached: true });
+    render(harness.view(keys(400)), { container: harness.list });
+    const max = harness.layout.maxScrollTop();
+    const targets = Array.from(
+      { length: 12 },
+      (_, jump) => max - (jump + 1) * 1_500,
+    );
+    targets.forEach((target) => {
+      act(() => harness.layout.userScrollTo(target));
+    });
+    expect(harness.visibleKeys()).toEqual([]);
+
+    await act(nextFrame);
+
+    expect(harness.layout.scrollTop).toBe(targets.at(-1));
+    expect(harness.visibleKeys().length).toBeGreaterThan(3);
+  });
+
+  it("follows each frame's latest position without further scroll events once the budget recovers", async () => {
+    const harness = setup({ attached: true });
+    render(harness.view(keys(400)), { container: harness.list });
+    const max = harness.layout.maxScrollTop();
+    const burst = (from: number) =>
+      Array.from({ length: 10 }, (_, jump) => from - jump * 1_500).forEach(
+        (target) => act(() => harness.layout.userScrollTo(target)),
+      );
+
+    burst(max - 1_500);
+    await act(nextFrame);
+    burst(max - 1_000);
+    expect(harness.visibleKeys()).toEqual([]);
+    await act(nextFrame);
+
+    expect(harness.layout.scrollTop).toBe(max - 1_000 - 9 * 1_500);
+    expect(harness.visibleKeys().length).toBeGreaterThan(3);
+  });
+
+  it("cancels a pending catch-up frame when the list unmounts", async () => {
+    const harness = setup({ attached: true });
+    const { unmount } = render(harness.view(keys(400)), {
+      container: harness.list,
+    });
+    const max = harness.layout.maxScrollTop();
+    Array.from({ length: 12 }, (_, jump) => max - (jump + 1) * 1_500).forEach(
+      (target) => act(() => harness.layout.userScrollTo(target)),
+    );
+    const cancel = vi.spyOn(window, "cancelAnimationFrame");
+
+    unmount();
+    await act(nextFrame);
+
+    expect(cancel).toHaveBeenCalled();
+    expect(harness.list.childElementCount).toBe(0);
   });
 });
