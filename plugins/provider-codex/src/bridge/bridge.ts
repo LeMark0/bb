@@ -290,6 +290,8 @@ const CODEX_APP_SERVER_ARGS_ENV = "BB_CODEX_BRIDGE_APP_SERVER_ARGS";
 const CODEX_POOL_BASE_URL_ENV = "CODEX_OPENAI_BASE_URL";
 const CODEX_POOL_AUTH_TOKEN_ENV = "CODEX_POOL_AUTH_TOKEN";
 const CODEX_HOME_ENV = "CODEX_HOME";
+const OWNER_THREAD_ENV = "BB_THREAD_ID";
+
 const APP_SERVER_LAUNCH_ENV_NAMES = [
   CODEX_POOL_BASE_URL_ENV,
   CODEX_POOL_AUTH_TOKEN_ENV,
@@ -416,6 +418,15 @@ function buildAppServerEnv(
       env: appServerLaunchEnv(envVars),
     }),
   );
+}
+
+function withOwnerThreadEnv(
+  env: NodeJS.ProcessEnv,
+  ownerThreadId: string | null,
+): NodeJS.ProcessEnv {
+  return ownerThreadId === null
+    ? env
+    : { ...env, [OWNER_THREAD_ENV]: ownerThreadId };
 }
 
 function isCodexSpawnFailure(error: unknown): boolean {
@@ -1008,7 +1019,10 @@ function spawnChildConnection(callbacks: {
   ) => void;
   onExit: (info: CodexAppServerExitInfo) => void;
 }): CodexAppServerConnection {
-  const env = buildAppServerEnv(callbacks.envVars);
+  const env = withOwnerThreadEnv(
+    buildAppServerEnv(callbacks.envVars),
+    callbacks.recordThreadId,
+  );
   const launch = resolveAppServerLaunch(appServerLaunchEnv(callbacks.envVars));
   const { envVars: _envVars, ...connectionCallbacks } = callbacks;
   return createCodexAppServerConnection({
