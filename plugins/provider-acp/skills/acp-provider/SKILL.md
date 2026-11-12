@@ -86,6 +86,20 @@ and paths outside the workspace; BB shows those requests as approvals. In `full`
 all four are allowed. Changing a thread's permission mode restarts the OpenCode
 session with the new policy; the conversation is restored.
 
+Each OpenCode permission request is its own interaction, even for the same
+tool call and command: OpenCode asks once per permission type, such as a path
+outside the workspace and then the shell command. Approving one can be
+followed at once by another pending interaction for the same item; answer that
+one too, since one decision never covers the next. `allow_once` selects
+OpenCode's once option and `allow_for_session` its always option.
+
+A turn started or steered by another thread's `bb thread tell`, or by a retry,
+cannot ask for approval. From the moment that message is delivered, bb rejects
+each request at once and shows the warning
+"bb denied a permission request without asking"; OpenCode tells its model the
+user rejected it and usually ends the turn. No pending interaction exists to
+approve. Send the work as a user message instead.
+
 OpenCode and Grok ACP support the core `bb thread compact` command; Cursor ACP
 does not expose compatible compaction. Check the actual agent's capabilities
 before attempting provider-specific recovery.

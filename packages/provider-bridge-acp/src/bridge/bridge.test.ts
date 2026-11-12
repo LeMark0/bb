@@ -3270,6 +3270,194 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("permission:no");
   });
 
+  function forwardedPermissionRequests(): BridgeJsonRpcOutputMessage[] {
+    return output.messages.filter(
+      (message) =>
+        message.method === "interaction/request" && message.id !== undefined,
+    );
+  }
+
+  function answerPermission(
+    request: BridgeJsonRpcOutputMessage,
+    decision: "allow_once" | "allow_for_session" | "deny",
+  ): void {
+    handleLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result:
+          decision === "deny"
+            ? { decision }
+            : { decision, grantedPermissions: null },
+      }),
+    );
+  }
+
+  it("denies a permission request without asking when the turn cannot ask, and says why", async () => {
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({
+          permissionMode: "accept-edits",
+          permissionEscalation: "deny",
+        }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toContain("permission:no");
+    expect(forwardedPermissionRequests()).toEqual([]);
+    expect(threadEventsOfType("provider/warning")).toMatchObject([
+      {
+        summary: "bb denied a permission request without asking",
+        details: expect.stringContaining("cannot ask for approval"),
+      },
+    ]);
+  });
+
+  it("denies the steered turn's later permission requests visibly when the steer cannot ask", async () => {
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({ permissionMode: "accept-edits" }),
+        input: [{ type: "text", text: "hang", mentions: [] }],
+      }),
+    );
+    await waitForResponse(
+      sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        clientRequestId: "creq_bcdefghjkm",
+        options: executionOptions({
+          permissionMode: "accept-edits",
+          permissionEscalation: "deny",
+        }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toContain("permission:no");
+    expect(forwardedPermissionRequests()).toEqual([]);
+    expect(threadEventsOfType("provider/warning")).toMatchObject([
+      { summary: "bb denied a permission request without asking" },
+    ]);
+  });
+
+  it("cancels a pending permission request on steer and asks again for the steered prompt", async () => {
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({ permissionMode: "accept-edits" }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+    const [first] = await waitFor(
+      () => {
+        const requests = forwardedPermissionRequests();
+        return requests.length === 1 ? requests : undefined;
+      },
+      "first forwarded permission request",
+    );
+
+    await waitForResponse(
+      sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        clientRequestId: "creq_bcdefghjkm",
+        options: executionOptions({ permissionMode: "accept-edits" }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+    const second = await waitFor(
+      () => forwardedPermissionRequests()[1],
+      "permission request from the steered prompt",
+    );
+    expect(second.id).not.toBe(first?.id);
+    answerPermission(second, "allow_once");
+
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toEqual(
+      expect.arrayContaining(["permission:cancelled", "permission:yes"]),
+    );
+    expect(threadEventsOfType("provider/warning")).toEqual([]);
+  });
+
+  it("asks separately for each permission request on the same tool call", async () => {
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({ permissionMode: "accept-edits" }),
+        input: [
+          { type: "text", text: "request-two-permissions", mentions: [] },
+        ],
+      }),
+    );
+    const first = await waitFor(
+      () => forwardedPermissionRequests()[0],
+      "first forwarded permission request",
+    );
+    answerPermission(first, "allow_once");
+    const second = await waitFor(
+      () => forwardedPermissionRequests()[1],
+      "second forwarded permission request",
+    );
+    expect(second.id).not.toBe(first.id);
+    expect(second.params).toMatchObject({
+      payload: {
+        subject: {
+          itemId: (first.params as { payload: { subject: { itemId: string } } })
+            .payload.subject.itemId,
+        },
+      },
+    });
+    answerPermission(second, "deny");
+
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toContain("permissions:yes,no");
+  });
+
+  it("answers a pending permission request with cancelled when the turn is stopped", async () => {
+    const requestLog = join(workspaceDir, "requests.log");
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      envVars: { FAKE_ACP_REQUEST_LOG: requestLog },
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({ permissionMode: "accept-edits" }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+    await waitFor(
+      () => forwardedPermissionRequests()[0],
+      "forwarded permission request",
+    );
+
+    await stopThread(providerThreadId);
+    await waitFor(
+      () =>
+        readFileSync(requestLog, "utf8").includes(
+          '{"permissionResult":{"outcome":{"outcome":"cancelled"}}}',
+        )
+          ? true
+          : undefined,
+      "cancelled answer reaching the agent",
+    );
+  });
+
   it("presents an external-directory write permission as a file-change approval", async () => {
     const { bbThreadId, providerThreadId } = await startThread({
       permissionMode: "accept-edits",

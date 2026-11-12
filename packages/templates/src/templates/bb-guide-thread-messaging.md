@@ -38,6 +38,18 @@ Messaging:
   its `id`, `waitingOn`, and `sendAt`. A deferred message waits for a thread
   that failed while it was deferred, and delivers when the thread is retried.
 
+  A message tell sends from inside another thread is agent-initiated, and a
+  retry is system-initiated. Neither can ask a person for approval, and each
+  provider shows that differently. In `accept-edits`, Codex runs such a turn
+  with approval policy `never`; in `auto` its automatic reviewer still
+  decides. Claude Code returns a policy denial for work that started from that
+  message. ACP agents get a rejection, with no pending interaction, for every
+  approval request that arrives after the message is delivered, including the
+  rest of a turn it steers, and the thread shows the warning "bb denied a
+  permission request without asking". OpenCode reports that rejection to its
+  model as the user's. Work that needs a person's approval has to come from a
+  user-initiated message.
+
   --plan sends the same structured /plan command the composer's plan action
   sends, so the agent proposes a plan for approval before executing (Claude
   Code and Codex threads). Providers without a declared plan action reject

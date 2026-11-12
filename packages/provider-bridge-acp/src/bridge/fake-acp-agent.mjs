@@ -620,6 +620,42 @@ async function handlePrompt(message) {
       outcome = "error";
     }
     notifyUpdate(messageChunk(`permission:${outcome}`));
+  } else if (text.includes("request-two-permissions")) {
+    notifyUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "perm-tool-2",
+      title: "Run diff",
+      kind: "execute",
+      status: "pending",
+      rawInput: { command: "diff a b" },
+    });
+    const outcomes = [];
+    for (const permission of ["external_directory", "bash"]) {
+      try {
+        const result = await requestClient("session/request_permission", {
+          sessionId: activeSessionId,
+          toolCall: {
+            toolCallId: "perm-tool-2",
+            title: `Run diff (${permission})`,
+            kind: "execute",
+            rawInput: { command: "diff a b" },
+          },
+          options: [
+            { optionId: "yes", name: "Allow", kind: "allow_once" },
+            { optionId: "always", name: "Always allow", kind: "allow_always" },
+            { optionId: "no", name: "Deny", kind: "reject_once" },
+          ],
+        });
+        outcomes.push(
+          result?.outcome?.outcome === "selected"
+            ? result.outcome.optionId
+            : "cancelled",
+        );
+      } catch {
+        outcomes.push("error");
+      }
+    }
+    notifyUpdate(messageChunk(`permissions:${outcomes.join(",")}`));
   } else if (text.includes("request-permission")) {
     notifyUpdate({
       sessionUpdate: "tool_call",
@@ -645,6 +681,12 @@ async function handlePrompt(message) {
           { optionId: "no", name: "Deny", kind: "reject_once" },
         ],
       });
+      if (requestLog) {
+        appendFileSync(
+          requestLog,
+          `${JSON.stringify({ permissionResult: result })}\n`,
+        );
+      }
       outcome =
         result?.outcome?.outcome === "selected"
           ? result.outcome.optionId
