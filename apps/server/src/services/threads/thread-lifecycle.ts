@@ -1,3 +1,8 @@
+import {
+  resolvePermissionEscalation,
+  withCurrentPermissionEscalation,
+  type ResolvePermissionEscalationArgs,
+} from "./thread-runtime-config.js";
 import { advanceEnvironmentProvisioning } from "../environments/environment-engine.js";
 import { revokeThreadDesktopBrowserControl } from "../desktop-browsers.js";
 import {
@@ -1338,9 +1343,16 @@ function dispatchThreadStartFromRequest(
   return result;
 }
 
+interface RequestThreadStartArgs extends Omit<
+  ThreadStartCommandArgs,
+  "permissionEscalation"
+> {
+  permissionEscalationArgs: ResolvePermissionEscalationArgs;
+}
+
 export async function requestThreadStart(
   deps: CommandResultSideEffectsDeps,
-  args: ThreadStartCommandArgs,
+  args: RequestThreadStartArgs,
 ): Promise<void> {
   await threadStartRequestDeduper.run(args.thread.id, () =>
     requestThreadStartOnce(deps, args),
@@ -1349,14 +1361,19 @@ export async function requestThreadStart(
 
 async function requestThreadStartOnce(
   deps: CommandResultSideEffectsDeps,
-  args: ThreadStartCommandArgs,
+  args: RequestThreadStartArgs,
 ): Promise<void> {
   if (hasLiveThreadStartInFlight(args.thread.id)) {
     return;
   }
 
+  const { permissionEscalationArgs, ...commandArgs } = args;
   const command = await buildThreadStartCommand(deps, {
-    ...args,
+    ...commandArgs,
+    permissionEscalation: resolvePermissionEscalation(
+      deps.db,
+      permissionEscalationArgs,
+    ),
   });
   if (hasLiveThreadStartInFlight(args.thread.id)) {
     return;
@@ -1377,6 +1394,12 @@ async function requestThreadStartOnce(
     }
     void runLiveHostCommand(deps, {
       command,
+      finalizeCommand: (outgoing) =>
+        withCurrentPermissionEscalation(
+          deps.db,
+          outgoing,
+          permissionEscalationArgs,
+        ),
       hostId: args.environment.hostId,
       timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
     })

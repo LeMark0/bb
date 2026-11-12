@@ -32,7 +32,6 @@ import {
   requestThreadStart,
 } from "./thread-lifecycle.js";
 import type { DispatchAuthor } from "./dispatch-author.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
 import {
   createThreadStartup,
   type ThreadForkDescriptor,
@@ -284,9 +283,11 @@ async function startThreadIfEnvironmentReady(
       : {}),
     requestId: args.context.request.clientRequestId,
     execution,
-    permissionEscalation: resolvePermissionEscalation({
+    permissionEscalationArgs: {
       initiator: args.context.request.initiator,
-    }),
+      senderThreadId: args.context.request.senderThreadId,
+      threadId: args.thread.id,
+    },
     projectId: args.thread.projectId,
     providerId: args.thread.providerId,
     syncGeneratedTitle: !args.context.request.titleProvided,
@@ -337,6 +338,7 @@ export function requestThreadProvision(
       fork: args.fork,
       input: args.providerInput ?? args.input,
       initiator,
+      senderThreadId,
       seedWithoutRun: args.startedOnBehalfOf !== null,
       titleProvided: args.titleProvided,
     });
@@ -376,6 +378,7 @@ export function requestThreadEnvironmentRestore(
         fork: null,
         input: [],
         initiator: "user",
+        senderThreadId: null,
         seedWithoutRun: true,
         titleProvided: true,
       });
@@ -421,6 +424,7 @@ export function requestThreadTargetReprovision(
         ? { inputGroups: args.inputGroups }
         : {}),
       initiator: args.initiator,
+      senderThreadId: args.senderThreadId,
       seedWithoutRun: false,
       titleProvided: true,
     });

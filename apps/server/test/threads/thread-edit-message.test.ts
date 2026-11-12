@@ -10,6 +10,7 @@ import {
   listQueuedThreadMessages,
   listStoredProjectPromptHistoryRows,
   listStoredThreadPromptHistoryRows,
+  updateThread,
 } from "@bb/db";
 import {
   encodeClientTurnRequestIdNumber,
@@ -21,6 +22,8 @@ import {
 } from "@bb/domain";
 import { threadResponseSchema } from "@bb/server-contract";
 import { describe, expect, it, vi } from "vitest";
+import * as onlineRpc from "../../src/services/hosts/online-rpc.js";
+import * as threadCommands from "../../src/services/threads/thread-commands.js";
 import { editThreadMessage } from "../../src/services/threads/thread-edit-message.js";
 import { requestThreadStopForCurrentState } from "../../src/services/threads/thread-lifecycle.js";
 import {
@@ -291,61 +294,163 @@ function seedEditableThread(
 }
 
 describe("editThreadMessage", () => {
-  it("preserves an agent caller and applies agent permission policy", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        includeSecondTurn: false,
-      });
-      const senderThread = seedThread(harness.deps, {
-        environmentId: environment.id,
-        projectId: thread.projectId,
-        providerId: "codex",
-        status: "active",
-      });
+  it.each([
+    { sender: "another thread", parentOfTarget: false, escalation: "deny" },
+    { sender: "the current parent", parentOfTarget: true, escalation: "ask" },
+  ] as const)(
+    "preserves an agent caller from $sender and applies its permission policy",
+    async ({ parentOfTarget, escalation }) => {
+      await withTestHarness(async (harness) => {
+        const { environment, thread } = seedEditableThread(harness, {
+          includeSecondTurn: false,
+        });
+        const senderThread = seedThread(harness.deps, {
+          environmentId: environment.id,
+          projectId: thread.projectId,
+          providerId: "codex",
+          status: "active",
+        });
+        if (parentOfTarget) {
+          updateThread(harness.db, harness.hub, thread.id, {
+            parentThreadId: senderThread.id,
+          });
+        }
 
-      await expect(
-        editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload: {
-            operationId: "edit-op-agent-caller",
-            expectedRequestSequence: 2,
-            input: [
-              { type: "text", text: "Replacement by agent", mentions: [] },
-            ],
-            permissionMode: "accept-edits",
-            senderThreadId: senderThread.id,
-          },
-        }),
-      ).resolves.toMatchObject({ ok: true, requestSequence: 8 });
-
-      const replacement = listEvents(harness.db, { threadId: thread.id }).find(
-        (event) => event.sequence === 8,
-      );
-      expect(JSON.parse(replacement?.data ?? "null")).toMatchObject({
-        initiator: "agent",
-        senderThreadId: senderThread.id,
-        execution: {
-          permissionMode: "accept-edits",
-        },
-        input: [
-          expect.objectContaining({
-            type: "text",
-            text: expect.stringContaining("Replacement by agent"),
+        await expect(
+          editThreadMessage(harness.deps, {
+            environment,
+            thread,
+            payload: {
+              operationId: "edit-op-agent-caller",
+              expectedRequestSequence: 2,
+              input: [
+                { type: "text", text: "Replacement by agent", mentions: [] },
+              ],
+              permissionMode: "accept-edits",
+              senderThreadId: senderThread.id,
+            },
           }),
-        ],
+        ).resolves.toMatchObject({ ok: true, requestSequence: 8 });
+
+        const replacement = listEvents(harness.db, {
+          threadId: thread.id,
+        }).find((event) => event.sequence === 8);
+        expect(JSON.parse(replacement?.data ?? "null")).toMatchObject({
+          initiator: "agent",
+          senderThreadId: senderThread.id,
+          execution: {
+            permissionMode: "accept-edits",
+          },
+          input: [
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("Replacement by agent"),
+            }),
+          ],
+        });
+        const start = await waitForQueuedCommand(
+          harness,
+          (queued) =>
+            queued.command.type === "thread.start" &&
+            queued.command.threadId === thread.id,
+        );
+        expect(start.command).toMatchObject({
+          options: { permissionEscalation: escalation },
+        });
       });
-      const start = await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.start" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(start.command).toMatchObject({
-        options: { permissionEscalation: "deny" },
+    },
+  );
+
+  it.each(
+    (["prepare", "transport"] as const).flatMap((window) =>
+      [
+        { change: "none", escalation: "ask" },
+        { change: "reparent", escalation: "deny" },
+      ].map((testCase) => ({ window, ...testCase })),
+    ),
+  )(
+    "rechecks the parent for a rewind before it leaves ($change during $window → $escalation)",
+    async ({ window, change, escalation }) => {
+      await withTestHarness(async (harness) => {
+        const { environment, thread } = seedEditableThread(harness);
+        const parent = seedThread(harness.deps, {
+          environmentId: environment.id,
+          projectId: thread.projectId,
+          providerId: "codex",
+          status: "active",
+        });
+        const stranger = seedThread(harness.deps, {
+          environmentId: environment.id,
+          projectId: thread.projectId,
+          providerId: "codex",
+        });
+        updateThread(harness.db, harness.hub, thread.id, {
+          parentThreadId: parent.id,
+        });
+        const reparent = () => {
+          if (change === "reparent") {
+            updateThread(harness.db, harness.hub, thread.id, {
+              parentThreadId: stranger.id,
+            });
+          }
+        };
+        const escalationsWhenChanged: (string | null)[] = [];
+        const build = threadCommands.buildThreadStartCommand;
+        const callForWork = onlineRpc.callHostOnlineRpcForWork;
+        const spy =
+          window === "prepare"
+            ? vi
+                .spyOn(threadCommands, "buildThreadStartCommand")
+                .mockImplementation(async (deps, args) => {
+                  escalationsWhenChanged.push(args.permissionEscalation);
+                  reparent();
+                  return build(deps, args);
+                })
+            : vi
+                .spyOn(onlineRpc, "callHostOnlineRpcForWork")
+                .mockImplementation((deps, args) => {
+                  if (args.command.type === "thread.rewind.prepare") {
+                    escalationsWhenChanged.push(
+                      args.command.options.permissionEscalation,
+                    );
+                    queueMicrotask(reparent);
+                  }
+                  return callForWork(deps, args);
+                });
+
+        try {
+          const editPromise = editThreadMessage(harness.deps, {
+            environment,
+            thread,
+            payload: {
+              operationId: `edit-op-rewind-${window}-${change}`,
+              expectedRequestSequence: 7,
+              input: [
+                { type: "text", text: "Parent replacement", mentions: [] },
+              ],
+              permissionMode: "accept-edits",
+              senderThreadId: parent.id,
+            },
+          });
+          const rewind = await waitForQueuedCommand(
+            harness,
+            (queued) => queued.command.type === "thread.rewind.prepare",
+          );
+
+          expect(escalationsWhenChanged).toEqual(["ask"]);
+          expect(rewind.command).toMatchObject({
+            options: { permissionEscalation: escalation },
+          });
+          await reportQueuedCommandSuccess(harness, rewind, {
+            providerThreadId: "provider-staged-rewind",
+          });
+          await expect(editPromise).resolves.toMatchObject({ ok: true });
+        } finally {
+          spy.mockRestore();
+        }
       });
-    });
-  });
+    },
+  );
 
   it("rejects an unknown agent caller before rewriting history", async () => {
     await withTestHarness(async (harness) => {

@@ -93,6 +93,7 @@ describe("thread provisioning recovery", () => {
       });
       const context = createThreadStartup({
         initiator: "user",
+        senderThreadId: null,
         clientRequestId: encodeClientTurnRequestIdNumber({ value: 1 }),
         environmentIntent: { type: "reuse", environmentId: environment.id },
         execution: THREAD_START_EXECUTION,
@@ -223,6 +224,7 @@ describe("thread provisioning recovery", () => {
       });
       const requestedContext = createThreadStartup({
         initiator: "user",
+        senderThreadId: null,
         clientRequestId: encodeClientTurnRequestIdNumber({ value: 1 }),
         environmentIntent: {
           type: "reuse",
@@ -355,6 +357,7 @@ describe("thread provisioning recovery", () => {
       });
       const requestedContext = createThreadStartup({
         initiator: "user",
+        senderThreadId: null,
         clientRequestId: encodeClientTurnRequestIdNumber({ value: 1 }),
         environmentIntent: {
           type: "reuse",

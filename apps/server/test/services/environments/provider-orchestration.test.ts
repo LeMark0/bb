@@ -195,6 +195,7 @@ function saveProviderStartup(
 ) {
   const context = createThreadStartup({
     initiator: "user",
+    senderThreadId: null,
     clientRequestId: encodeClientTurnRequestIdNumber({ value: 1 }),
     environmentIntent: {
       type: "provider",
@@ -744,6 +745,7 @@ describe("core environment orchestration", () => {
         } else {
           const context = createThreadStartup({
             initiator: "user",
+            senderThreadId: null,
             clientRequestId: encodeClientTurnRequestIdNumber({ value: 1 }),
             environmentIntent: { type: "reuse", environmentId: target.id },
             execution: {

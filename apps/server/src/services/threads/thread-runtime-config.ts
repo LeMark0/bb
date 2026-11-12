@@ -2,7 +2,14 @@ import {
   resolveHostEnvironment,
   mergeHostAndProviderEnvironment,
 } from "../hosts/host-environment.js";
-import { getEnvironment, getHost, getProject } from "@bb/db";
+import {
+  getEnvironment,
+  getHost,
+  getProject,
+  getThread,
+  type DbConnection,
+  type DbTransaction,
+} from "@bb/db";
 import { PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS } from "@get-bb/plugin-sdk/internal/host-policy";
 import type {
   DynamicTool,
@@ -13,6 +20,7 @@ import type {
   EnvironmentStatus,
 } from "@bb/domain";
 import type {
+  HostDaemonCommand,
   HostDaemonContributedEnvEntry,
   HostDaemonInjectedSkillSource,
 } from "@bb/host-daemon-contract";
@@ -55,8 +63,10 @@ interface ResolveThreadRuntimeCommandConfigArgs {
   thread: Thread;
 }
 
-interface ResolvePermissionEscalationArgs {
+export interface ResolvePermissionEscalationArgs {
   initiator: ThreadTurnInitiator;
+  senderThreadId: string | null;
+  threadId: string;
 }
 
 export interface ResolvedThreadRuntimeCommandConfig {
@@ -105,13 +115,56 @@ function resolveDynamicTools(
 }
 
 export function resolvePermissionEscalation(
+  db: DbConnection | DbTransaction,
   args: ResolvePermissionEscalationArgs,
 ): PermissionEscalation {
-  if (args.initiator !== "user") {
-    return "deny";
+  if (args.initiator === "user") {
+    return "ask";
   }
+  if (args.initiator === "agent" && senderIsCurrentParent(db, args)) {
+    return "ask";
+  }
+  return "deny";
+}
 
-  return "ask";
+type EscalatingHostCommand = Extract<
+  HostDaemonCommand,
+  { type: "thread.start" | "thread.rewind.prepare" | "turn.submit" }
+>;
+
+export function withCurrentPermissionEscalation<
+  TCommand extends EscalatingHostCommand,
+>(
+  db: DbConnection | DbTransaction,
+  command: TCommand,
+  args: ResolvePermissionEscalationArgs,
+): TCommand {
+  const options = command.options;
+  if (options.permissionEscalation !== "ask") {
+    return command;
+  }
+  if (resolvePermissionEscalation(db, args) === "ask") {
+    return command;
+  }
+  return { ...command, options: { ...options, permissionEscalation: "deny" } };
+}
+
+function senderIsCurrentParent(
+  db: DbConnection | DbTransaction,
+  args: Pick<ResolvePermissionEscalationArgs, "senderThreadId" | "threadId">,
+): boolean {
+  if (args.senderThreadId === null) {
+    return false;
+  }
+  const target = getThread(db, args.threadId);
+  if (target === null || target.deletedAt !== null) {
+    return false;
+  }
+  if (target.parentThreadId !== args.senderThreadId) {
+    return false;
+  }
+  const sender = getThread(db, args.senderThreadId);
+  return sender !== null && sender.deletedAt === null;
 }
 
 export async function resolveThreadRuntimeCommandConfig(

@@ -48,7 +48,10 @@ import {
   requireReadyThreadEnvironment,
 } from "./thread-turn-dispatch.js";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
+import {
+  resolvePermissionEscalation,
+  withCurrentPermissionEscalation,
+} from "./thread-runtime-config.js";
 import {
   buildThreadStatusChangeMetadata,
   resolveThreadRuntimeState,
@@ -625,9 +628,15 @@ async function sendThreadMessageWithoutContextClear(
   // other callers bypass the checkpoint deliberately: a manual compaction turn
   // and an edited message's re-send are operations on the thread's existing
   // conversation, not new work a limiter admits.
-  const permissionEscalation = resolvePermissionEscalation({
+  const permissionEscalationArgs = {
     initiator,
-  });
+    senderThreadId,
+    threadId: thread.id,
+  };
+  const permissionEscalation = resolvePermissionEscalation(
+    deps.db,
+    permissionEscalationArgs,
+  );
 
   if (
     await dispatchTurnDuringReprovision({
@@ -759,6 +768,12 @@ async function sendThreadMessageWithoutContextClear(
     );
     startLiveHostCommand(deps, {
       command: command.command,
+      finalizeCommand: (outgoing) =>
+        withCurrentPermissionEscalation(
+          deps.db,
+          outgoing,
+          permissionEscalationArgs,
+        ),
       hostId: readyEnvironment.hostId,
       timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
       ...(args.historyReplacement?.onCommandSettled !== undefined
@@ -839,6 +854,12 @@ async function sendThreadMessageWithoutContextClear(
   );
   startLiveHostCommand(deps, {
     command,
+    finalizeCommand: (outgoing) =>
+      withCurrentPermissionEscalation(
+        deps.db,
+        outgoing,
+        permissionEscalationArgs,
+      ),
     hostId: readyEnvironment.hostId,
     timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
     onError: ({ error }) => {
