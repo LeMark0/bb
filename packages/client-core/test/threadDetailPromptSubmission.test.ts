@@ -356,7 +356,7 @@ describe("threadDetailPromptSubmission", () => {
     }
   });
 
-  it("offers a stop-free queue mode while a stop is in flight, and keeps pending interactions blocked", () => {
+  it("offers a stop-free queue mode while a stop is in flight, and a steer-free queue while a busy run awaits an interaction", () => {
     const onStop = () => undefined;
     expect(
       buildFollowUpSubmitMode({
@@ -367,13 +367,24 @@ describe("threadDetailPromptSubmission", () => {
         runtimeDisplayStatus: "starting",
       }),
     ).toEqual({ kind: "queue-while-stopping" });
+    for (const runtimeDisplayStatus of ["active", "starting"] as const) {
+      expect(
+        buildFollowUpSubmitMode({
+          hasPendingInteraction: true,
+          isDefaultExecutionOptionsLoading: false,
+          isStopRequested: false,
+          onStop,
+          runtimeDisplayStatus,
+        }),
+      ).toEqual({ kind: "queue-while-awaiting-interaction", onStop });
+    }
     expect(
       buildFollowUpSubmitMode({
         hasPendingInteraction: true,
         isDefaultExecutionOptionsLoading: false,
         isStopRequested: false,
         onStop,
-        runtimeDisplayStatus: "starting",
+        runtimeDisplayStatus: "idle",
       }),
     ).toEqual({ kind: "blocked", reason: "pending-interaction" });
   });

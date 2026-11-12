@@ -125,6 +125,8 @@ vi.mock("@/components/promptbox/ComposerBox", async () => {
       };
       submission?: {
         onModifierSubmit?: () => void;
+        onStop?: () => void;
+        icon?: string;
         swapSubmitActions?: boolean;
         showModifierSubmitAction?: boolean;
         title?: string;
@@ -178,6 +180,7 @@ vi.mock("@/components/promptbox/ComposerBox", async () => {
             ) : null}
             <button
               type="button"
+              data-submit-icon={submission?.icon}
               onClick={(event) => {
                 if (submission?.swapSubmitActions) {
                   submission.onModifierSubmit?.();
@@ -207,6 +210,11 @@ vi.mock("@/components/promptbox/ComposerBox", async () => {
             >
               Modifier submit
             </button>
+            {submission?.onStop ? (
+              <button type="button" onClick={submission.onStop}>
+                Stop run
+              </button>
+            ) : null}
             {onCollapse ? (
               <button type="button" onClick={onCollapse}>
                 Collapse prompt box
@@ -689,6 +697,45 @@ describe("FollowUpPromptBox", () => {
     expect(screen.getByLabelText("Follow-up prompt")).toBe(input);
     expect(composerShell?.hidden).toBe(false);
     expect(screen.queryByTestId("pending-interaction")).toBeNull();
+  });
+
+  it("keeps the composer open beside a pending interaction to queue, not steer, while the run can still be stopped", () => {
+    const onStop = vi.fn();
+    const props = createFollowUpPromptBoxProps({
+      kind: "queue-while-awaiting-interaction",
+      onStop,
+    });
+    const composer = {
+      ...props.composer!,
+      steerActiveThreadOnEnter: true,
+      threadRuntimeDisplayStatus: "active" as const,
+    };
+    const { container } = render(
+      <FollowUpPromptBox
+        {...props}
+        composer={composer}
+        pendingInteraction={
+          <div data-testid="pending-interaction">Allow file write?</div>
+        }
+      />,
+    );
+
+    expect(
+      container.querySelector<HTMLElement>("[data-follow-up-composer]")?.hidden,
+    ).toBe(false);
+    expect(
+      screen
+        .getByRole("button", { name: "Modifier submit" })
+        .getAttribute("title"),
+    ).toBe("Queue for after this run (Enter)");
+    expect(
+      screen.getByRole("button", { name: "Submit" }).dataset.submitIcon,
+    ).toBe("ListEnd");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(composer.onSubmit).toHaveBeenCalledOnce();
+    expect(composer.onModifierSubmit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    expect(onStop).toHaveBeenCalledOnce();
   });
 
   it.each([

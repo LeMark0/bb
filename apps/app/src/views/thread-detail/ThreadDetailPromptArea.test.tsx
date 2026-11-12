@@ -597,6 +597,115 @@ describe("ThreadDetailPromptArea", () => {
     );
   });
 
+  it("queues without steering while a busy run awaits an interaction, keeping the draft when the queue request fails", async () => {
+    const attachment: PromptDraftAttachment = {
+      type: "localFile",
+      path: "uploads/notes.txt",
+      name: "notes.txt",
+      sizeBytes: 5,
+    };
+    mocks.promptDraft.text = "After this, open a PR.";
+    mocks.promptDraft.attachments = [attachment];
+    mocks.queuedMessages = [makeQueuedMessage()];
+    renderPromptArea({
+      pendingInteractions: [makePendingInteraction()],
+      thread: makeThread({
+        runtime: { displayStatus: "active" },
+        status: "active",
+      }),
+    });
+    expect(screen.getByTestId("submit-mode").textContent).toBe(
+      "queue-while-awaiting-interaction:",
+    );
+    expect(screen.getByTestId("queued-message-list")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Capture plugin host" }),
+    );
+
+    await expect(mocks.composerModifierSubmit?.()).rejects.toThrow(
+      "There is nothing to send right now.",
+    );
+    mocks.sendMessageMutateAsync.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await expect(mocks.composerSubmit?.()).rejects.toThrow();
+    });
+    expect(mocks.promptDraft.restoreIfEmpty).toHaveBeenCalledWith({
+      text: "After this, open a PR.",
+      mentions: [],
+      attachments: [attachment],
+    });
+
+    await act(async () => {
+      await mocks.composerSubmit?.();
+    });
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(2);
+    for (const [request] of mocks.sendMessageMutateAsync.mock.calls) {
+      expect(request).toMatchObject({
+        id: "thr_1",
+        mode: "queue-if-active",
+      });
+    }
+    expect(mocks.sendQueuedMessageMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each(["active", "stopping"] as const)(
+    "keeps Send now disabled while an interaction is pending on a %s thread",
+    (status) => {
+      mocks.queuedMessages = [
+        makeQueuedMessage({ waitingOn: { kind: "thread-busy" } }),
+      ];
+      renderPromptArea({
+        pendingInteractions: [makePendingInteraction()],
+        thread: makeThread({ runtime: { displayStatus: status }, status }),
+      });
+
+      expect(
+        screen
+          .getByTestId("queued-message-list")
+          .hasAttribute("data-send-disabled"),
+      ).toBe(true);
+    },
+  );
+
+  it("keeps a queued Enter as one queue request when the run finishes mid-submission", async () => {
+    mocks.promptDraft.text = "Then update the changelog.";
+    const response = createDeferredPromise<void>();
+    mocks.sendMessageMutateAsync.mockReturnValueOnce(response.promise);
+    const busy = makeThread({
+      runtime: { displayStatus: "active" },
+      status: "active",
+    });
+    const { rerender } = renderPromptArea({ thread: busy });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Capture plugin host" }),
+    );
+    let submission: void | Promise<void> | undefined;
+    act(() => {
+      submission = mocks.composerSubmit?.();
+    });
+
+    rerender(
+      buildPromptAreaElement({
+        thread: makeThread({
+          runtime: { displayStatus: "idle" },
+          status: "idle",
+        }),
+      }),
+    );
+    await expect(mocks.composerSubmit?.()).rejects.toThrow(
+      "A message is already being submitted.",
+    );
+    await act(async () => {
+      response.resolve();
+      await submission;
+    });
+
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledOnce();
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "thr_1", mode: "queue-if-active" }),
+    );
+  });
+
   it("steers with sendAt and plugin data from the modifier action", async () => {
     mocks.promptDraft.text = "Steer this later";
     renderPromptArea({

@@ -2098,10 +2098,19 @@ describe("ComposerBox submit shortcuts", () => {
           });
           expect(onSubmit).toHaveBeenCalledTimes(value ? 1 : 0);
           expect(onModifierSubmit).toHaveBeenCalledOnce();
-          if (!value) {
-            fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
-            expect(onStop).toHaveBeenCalledOnce();
-          }
+          const stop = screen.getByRole("button", { name: "Stop run" });
+          const primary = document.querySelector(
+            "[data-promptbox-submit-action][type=submit]",
+          );
+          expect(primary).not.toBeNull();
+          expect(
+            stop.compareDocumentPosition(primary!) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+          ).not.toBe(0);
+          fireEvent.click(stop);
+          expect(onStop).toHaveBeenCalledOnce();
+          expect(onSubmit).toHaveBeenCalledTimes(value ? 1 : 0);
+          expect(onModifierSubmit).toHaveBeenCalledOnce();
         },
       );
     },
