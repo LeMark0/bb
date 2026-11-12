@@ -90,7 +90,11 @@ async function startLiveThreadStartRpc(
       value: args.requestIdValue,
     }),
     execution: START_EXECUTION,
-    permissionEscalation: "ask",
+    permissionEscalationArgs: {
+      initiator: "user",
+      senderThreadId: null,
+      threadId: thread.id,
+    },
     projectId: project.id,
     providerId: thread.providerId,
     syncGeneratedTitle: false,

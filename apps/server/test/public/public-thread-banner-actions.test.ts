@@ -1,4 +1,9 @@
-import { getLastStoredProviderThreadId, getThread, listEvents } from "@bb/db";
+import {
+  getLastStoredProviderThreadId,
+  getThread,
+  listEvents,
+  updateThread,
+} from "@bb/db";
 import {
   encodeClientTurnRequestIdNumber,
   threadScope,
@@ -154,9 +159,11 @@ function seedGoal(
   harness: TestAppHarness,
   fixture: BannerFixture,
   status: "active" | "paused",
+  permissionMode: "accept-edits" | "full" = "full",
 ): void {
   seedThreadRuntimeState(harness.deps, {
     environmentId: fixture.environmentId,
+    permissionMode,
     providerThreadId: "provider-thread-1",
     sequenceStart: 1,
     threadId: fixture.threadId,
@@ -648,13 +655,24 @@ describe("public thread banner actions", () => {
   it("clears a paused Goal", async () => {
     await withTestHarness(async (harness) => {
       const fixture = seedBannerFixture(harness, { status: "idle" });
-      seedGoal(harness, fixture, "paused");
+      seedGoal(harness, fixture, "paused", "accept-edits");
+      const parent = seedThread(harness.deps, {
+        environmentId: fixture.environmentId,
+        projectId: fixture.projectId,
+      });
+      updateThread(harness.db, harness.hub, fixture.threadId, {
+        parentThreadId: parent.id,
+      });
+      let clearOptions: unknown = null;
       registerHostRpcResponder(harness, {
         hostId: fixture.hostId,
         sessionId: fixture.sessionId,
         handle: ({ command }) => {
           if (command.type === "host.read_workspace_agent_context") {
             return { ok: true, result: EMPTY_WORKSPACE_AGENT_CONTEXT };
+          }
+          if (command.type === "thread.goal.clear") {
+            clearOptions = command.options;
           }
           seedEvent(harness.deps, {
             threadId: fixture.threadId,
@@ -678,6 +696,7 @@ describe("public thread banner actions", () => {
         response.status,
         JSON.stringify(await readJson(response.clone())),
       ).toBe(200);
+      expect(clearOptions).toMatchObject({ permissionEscalation: "deny" });
     });
   });
 

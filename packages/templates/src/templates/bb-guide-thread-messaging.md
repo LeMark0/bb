@@ -39,16 +39,24 @@ Messaging:
   that failed while it was deferred, and delivers when the thread is retried.
 
   A message tell sends from inside another thread is agent-initiated, and a
-  retry is system-initiated. Neither can ask a person for approval, and each
-  provider shows that differently. In `accept-edits`, Codex runs such a turn
-  with approval policy `never`; in `auto` its automatic reviewer still
-  decides. Claude Code returns a policy denial for work that started from that
-  message. ACP agents get a rejection, with no pending interaction, for every
-  approval request that arrives after the message is delivered, including the
-  rest of a turn it steers, and the thread shows the warning "bb denied a
-  permission request without asking". OpenCode reports that rejection to its
-  model as the user's. Work that needs a person's approval has to come from a
-  user-initiated message.
+  retry is system-initiated. An agent-initiated message from the target's
+  current parent can ask for approval as a user message does: its requests
+  become pending interactions that someone still has to resolve, under the
+  thread's own permission mode. bb checks the parent link when it dispatches
+  the message, so a queued or edited message follows a reparent and an orphan
+  cannot ask. The parent link records where a message came from; it does not
+  authenticate the sender, and resolving the interaction remains the approval.
+
+  A message from any other thread, a retry, a system notice and a Goal clear
+  cannot ask a person for approval, and each provider shows that
+  differently. In `accept-edits`, Codex runs such a turn with approval policy
+  `never`; in `auto` its automatic reviewer still decides. Claude Code
+  returns a policy denial for work that started from that message. ACP agents
+  get a rejection, with no pending interaction, for every approval request
+  that arrives after the message is delivered, including the rest of a turn it
+  steers, and the thread shows the warning "bb denied a permission request
+  without asking". OpenCode reports that rejection to its model as the user's. Work that needs a person's approval has to come from a
+  user-initiated message or from the thread's parent.
 
   --plan sends the same structured /plan command the composer's plan action
   sends, so the agent proposes a plan for approval before executing (Claude

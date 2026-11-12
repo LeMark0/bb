@@ -44,7 +44,10 @@ import {
   buildThreadStartCommand,
 } from "./thread-commands.js";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
+import {
+  resolvePermissionEscalation,
+  withCurrentPermissionEscalation,
+} from "./thread-runtime-config.js";
 import { requireReadyThreadEnvironment } from "./thread-turn-dispatch.js";
 import { ensureHostSessionReadyForWork } from "../hosts/host-lifecycle.js";
 import {
@@ -561,15 +564,21 @@ export async function editThreadMessage(
       conflict("This earlier turn has no provider session");
     }
     rewindLeaseId = randomUUID();
+    const rewindPermissionEscalationArgs = {
+      initiator,
+      senderThreadId,
+      threadId: editableThread.id,
+    };
     const startCommand = await buildThreadStartCommand(deps, {
       thread: editableThread,
       fork: null,
       input: [],
       requestId: createClientTurnRequestId(),
       execution,
-      permissionEscalation: resolvePermissionEscalation({
-        initiator,
-      }),
+      permissionEscalation: resolvePermissionEscalation(
+        deps.db,
+        rewindPermissionEscalationArgs,
+      ),
       environment: readyEnvironment,
       projectId: editableThread.projectId,
       providerId: editableThread.providerId,
@@ -582,6 +591,12 @@ export async function editThreadMessage(
           retainThroughProviderCheckpoint: target.precedingProviderCheckpoint,
           sourceProviderThreadId: target.sourceProviderThreadId,
         }),
+        finalizeCommand: (outgoing) =>
+          withCurrentPermissionEscalation(
+            deps.db,
+            outgoing,
+            rewindPermissionEscalationArgs,
+          ),
         hostId: readyEnvironment.hostId,
         timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
       });

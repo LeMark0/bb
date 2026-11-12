@@ -3350,6 +3350,42 @@ describe("acp bridge", () => {
     ]);
   });
 
+  it("asks again once a steer that may ask follows a turn that could not", async () => {
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+    });
+    await waitForResponse(
+      sendTurnRequest("turn/start", providerThreadId, {
+        options: executionOptions({
+          permissionMode: "accept-edits",
+          permissionEscalation: "deny",
+        }),
+        input: [{ type: "text", text: "hang", mentions: [] }],
+      }),
+    );
+    await waitForResponse(
+      sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        clientRequestId: "creq_bcdefghjkm",
+        options: executionOptions({
+          permissionMode: "accept-edits",
+          permissionEscalation: "ask",
+        }),
+        input: [{ type: "text", text: "request-permission", mentions: [] }],
+      }),
+    );
+    const forwarded = await waitFor(
+      () => forwardedPermissionRequests()[0],
+      "permission request from the steer that may ask",
+    );
+    answerPermission(forwarded, "allow_once");
+
+    await waitForTurnCompleted();
+    expect(agentMessageTexts()).toContain("permission:yes");
+    expect(threadEventsOfType("provider/warning")).toEqual([]);
+  });
+
   it("cancels a pending permission request on steer and asks again for the steered prompt", async () => {
     const { providerThreadId } = await startThread({
       permissionMode: "accept-edits",
@@ -3361,13 +3397,10 @@ describe("acp bridge", () => {
         input: [{ type: "text", text: "request-permission", mentions: [] }],
       }),
     );
-    const [first] = await waitFor(
-      () => {
-        const requests = forwardedPermissionRequests();
-        return requests.length === 1 ? requests : undefined;
-      },
-      "first forwarded permission request",
-    );
+    const [first] = await waitFor(() => {
+      const requests = forwardedPermissionRequests();
+      return requests.length === 1 ? requests : undefined;
+    }, "first forwarded permission request");
 
     await waitForResponse(
       sendTurnRequest("turn/steer", providerThreadId, {

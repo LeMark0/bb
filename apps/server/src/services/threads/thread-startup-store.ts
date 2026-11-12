@@ -49,6 +49,7 @@ export const threadProvisionCommonPayloadSchema = z.object({
   titleProvided: z.boolean(),
   seedWithoutRun: z.boolean().default(false),
   initiator: threadTurnInitiatorSchema.default("user"),
+  senderThreadId: z.string().min(1).nullable().default(null),
 });
 
 export type ThreadForkDescriptor = z.infer<typeof threadForkDescriptorSchema>;

@@ -40,6 +40,12 @@ interface CallHostOnlineRpcArgs<TCommand extends HostDaemonRpcCommand> {
   timeoutMs: number;
 }
 
+interface CallHostOnlineRpcForWorkArgs<
+  TCommand extends HostDaemonRpcCommand,
+> extends CallHostOnlineRpcArgs<TCommand> {
+  finalizeCommand?: (command: TCommand) => TCommand;
+}
+
 type PluginHostCallCommand = Extract<
   HostDaemonRpcCommand,
   { type: "plugin.host.call" }
@@ -72,18 +78,27 @@ export async function callHostOnlineRpc(
 
 export function callHostOnlineRpcForWork<TCommand extends HostDaemonRpcCommand>(
   deps: WorkSessionDeps,
-  args: CallHostOnlineRpcArgs<TCommand>,
+  args: CallHostOnlineRpcForWorkArgs<TCommand>,
 ): Promise<HostDaemonRpcResultForCommand<TCommand>>;
 export async function callHostOnlineRpcForWork(
   deps: WorkSessionDeps,
-  args: CallHostOnlineRpcArgs<HostDaemonRpcCommand>,
+  args: CallHostOnlineRpcForWorkArgs<HostDaemonRpcCommand>,
 ): Promise<HostDaemonRpcResultForCommand> {
-  await waitForReconnectingDaemon(deps, args.hostId);
-  await prepareHostForWork(deps, args, false);
-  return callHostOnlineRpcWithRetry(deps, args, {
-    retryOnTransportFailure: false,
-    waitForTransportFailure: false,
-  });
+  const { finalizeCommand, ...callArgs } = args;
+  await waitForReconnectingDaemon(deps, callArgs.hostId);
+  await prepareHostForWork(deps, callArgs, false);
+  const command =
+    finalizeCommand === undefined
+      ? callArgs.command
+      : finalizeCommand(callArgs.command);
+  return callHostOnlineRpcWithRetry(
+    deps,
+    { ...callArgs, command },
+    {
+      retryOnTransportFailure: false,
+      waitForTransportFailure: false,
+    },
+  );
 }
 
 export function callHostRetryableOnlineRpc<

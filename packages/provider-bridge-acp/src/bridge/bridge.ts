@@ -1973,7 +1973,7 @@ function handleElicitationRequest(
 }
 
 const AUTO_DENIED_PERMISSION_DETAILS =
-  "A message from another thread, a retry or bb itself started or steered this turn, and those turns cannot ask for approval. The agent may report the denial as a user rejection. To let the agent ask again, send the request as a user message.";
+  "A message from a thread other than this thread's parent, a retry or bb itself started or steered this turn, and those turns cannot ask for approval. The agent may report the denial as a user rejection. To let the agent ask again, send the request as a user message or from this thread's parent.";
 
 function handlePermissionRequest(
   session: AcpThreadSession,

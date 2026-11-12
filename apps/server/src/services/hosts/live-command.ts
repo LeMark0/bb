@@ -35,6 +35,9 @@ export const LIVE_DAEMON_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 interface RunLiveHostCommandArgs<TType extends HostDaemonSettledCommandType> {
   command: Extract<HostDaemonCommand, { type: TType }>;
   execution?: HostDaemonCommandExecutionRecord;
+  finalizeCommand?: (
+    command: Extract<HostDaemonCommand, { type: TType }>,
+  ) => Extract<HostDaemonCommand, { type: TType }>;
   hostId: string;
   preserveOnHostUnavailable?: boolean;
   timeoutMs: number;
@@ -254,10 +257,19 @@ export async function runLiveHostCommand<
         : {}),
     };
     noteTurnTraceCommandSent({ command: sourceCommand, hostId: args.hostId });
+    const finalizeCommand = args.finalizeCommand;
     const result = await call(deps, {
       command,
       hostId: args.hostId,
       timeoutMs: args.timeoutMs,
+      ...(finalizeCommand !== undefined
+        ? {
+            finalizeCommand: (prepared: typeof command) => ({
+              ...prepared,
+              ...finalizeCommand(args.command),
+            }),
+          }
+        : {}),
     });
     noteTurnTraceCommandSettled({ command: sourceCommand, result });
     await applyLiveHostCommandReport(deps, {
