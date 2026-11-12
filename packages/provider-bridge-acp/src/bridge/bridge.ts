@@ -10,6 +10,7 @@ import type {
   AvailableModel,
   ExtensionKind,
   JsonValue,
+  PermissionEscalation,
   PromptInput,
   ReasoningLevel,
   SessionOptionSelections,
@@ -40,6 +41,7 @@ import {
   experimental_defineProviderBridge,
   mimeTypeFromExtension,
   runBridgeRequest,
+  shouldAutoDenyInteractiveRequest,
   withoutBridgeRuntimeEnv,
 } from "@bb/provider-bridge-protocol/bridge-kit";
 import type {
@@ -175,6 +177,7 @@ import {
 
 interface AcpSessionPolicy {
   permissionMode: "accept-edits" | "full";
+  permissionEscalation: PermissionEscalation | null;
   workspaceWriteRoots: string[];
 }
 
@@ -1969,6 +1972,9 @@ function handleElicitationRequest(
     });
 }
 
+const AUTO_DENIED_PERMISSION_DETAILS =
+  "A message from another thread, a retry or bb itself started or steered this turn, and those turns cannot ask for approval. The agent may report the denial as a user rejection. To let the agent ask again, send the request as a user message.";
+
 function handlePermissionRequest(
   session: AcpThreadSession,
   params: unknown,
@@ -2017,6 +2023,16 @@ function handlePermissionRequest(
 
   if (session.policy.permissionMode === "full") {
     respondPermission(pending, "allow_once");
+    return;
+  }
+
+  if (shouldAutoDenyInteractiveRequest(session.policy)) {
+    emitForSession(session, ACP_WARNING_METHOD, {
+      threadId: session.bbThreadId,
+      summary: "bb denied a permission request without asking",
+      details: AUTO_DENIED_PERMISSION_DETAILS,
+    });
+    respondPermission(pending, "deny");
     return;
   }
 
@@ -2404,6 +2420,7 @@ async function startAgentSession(
     supportsLoadSession: false,
     policy: {
       permissionMode: params.permissionMode,
+      permissionEscalation: params.permissionEscalation,
       workspaceWriteRoots: params.workspaceWriteRoots,
     },
     pendingInstructions: params.instructions,
@@ -3263,6 +3280,7 @@ function reconcileExecutionSettings(
     launchReasoningLevel: modelParams.launchReasoningLevel,
     envVars,
     permissionMode: options.permissionMode,
+    permissionEscalation: options.permissionEscalation,
     workspaceWriteRoots,
   };
   const launchModelChanged = !isDeepStrictEqual(
@@ -3298,6 +3316,7 @@ function reconcileExecutionSettings(
   cancelPendingPermissions(session);
   session.policy = {
     permissionMode: options.permissionMode,
+    permissionEscalation: options.permissionEscalation,
     workspaceWriteRoots,
   };
   if (restart) {
@@ -4002,6 +4021,10 @@ async function handleRequest(
         requestId: null,
         options: params.options,
       });
+      session.policy = {
+        ...session.policy,
+        permissionEscalation: params.options.permissionEscalation,
+      };
       requestSteerCancel(session);
       sendResult(request.id, { threadId: params.threadId });
       return;

@@ -16,6 +16,7 @@ import {
 
 const BASE_OPTIONS = {
   permissionMode: "full",
+  permissionEscalation: null,
 } as const;
 
 function launchSpecFor(spec: AcpLaunchSpec): AcpLaunchSpec {

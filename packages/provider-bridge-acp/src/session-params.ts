@@ -1,5 +1,6 @@
 import type {
   DynamicTool,
+  PermissionEscalation,
   PermissionMode,
   ReasoningLevel,
   ServiceTier,
@@ -22,6 +23,7 @@ export interface AcpSessionExecutionOptions {
   instructions?: string | undefined;
   envVars?: Record<string, string> | undefined;
   permissionMode: PermissionMode;
+  permissionEscalation: PermissionEscalation | null;
   skillRoots?: readonly AcpSkillRoot[] | undefined;
 }
 
@@ -75,6 +77,7 @@ export interface AcpSessionParams {
   parameterizedModelPicker: boolean;
   permissionCli?: AcpBridgePermissionCli;
   permissionMode: "accept-edits" | "full";
+  permissionEscalation: PermissionEscalation | null;
   workspaceWriteRoots: string[];
   envVars?: Record<string, string>;
   instructions?: string;
@@ -334,6 +337,7 @@ export function buildAcpSessionParams(
       ? { permissionCli: launchSpec.permissionCli }
       : {}),
     permissionMode: options.permissionMode,
+    permissionEscalation: options.permissionEscalation,
     workspaceWriteRoots: [cwd, ...args.additionalWorkspaceWriteRoots],
     ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
     ...(instructions ? { instructions } : {}),
