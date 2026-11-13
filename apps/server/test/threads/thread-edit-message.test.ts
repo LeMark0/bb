@@ -96,6 +96,7 @@ function seedTurn(
     inputGroups?: PromptInput[][];
     initiator?: "agent" | "user";
     leadingAgentOnlyInput?: PromptInput[];
+    progressSenders?: string[];
     requestSequence: number;
     senderThreadId?: string;
     text: string;
@@ -125,6 +126,9 @@ function seedTurn(
       ],
       ...(args.inputGroups !== undefined
         ? { inputGroups: args.inputGroups }
+        : {}),
+      ...(args.progressSenders !== undefined
+        ? { progressSenders: args.progressSenders }
         : {}),
       target:
         args.requestSequence === 2
@@ -291,6 +295,72 @@ function seedEditableThread(
     });
   }
   return { environment, thread };
+}
+
+function seedProgressChild(
+  harness: TestAppHarness,
+  thread: { id: string; projectId: string },
+  environmentId: string,
+) {
+  return seedThread(harness.deps, {
+    environmentId,
+    parentThreadId: thread.id,
+    projectId: thread.projectId,
+    status: "active",
+  });
+}
+
+function seedHeldProgress(
+  harness: TestAppHarness,
+  threadId: string,
+  senderThreadId: string,
+  text: string,
+) {
+  createQueuedThreadMessage(harness.db, harness.deps.hub, {
+    threadId,
+    content: [{ type: "text", text, mentions: [] }],
+    senderThreadId,
+    model: "gpt-5",
+    reasoningLevel: "medium",
+    permissionMode: "full",
+    serviceTier: "default",
+    waitingOn: { kind: "progress" },
+    sendAt: null,
+    payload: { kind: "inline" },
+    systemNotice: null,
+  });
+}
+
+async function editAndRewind(
+  harness: TestAppHarness,
+  environment: Parameters<typeof editThreadMessage>[1]["environment"],
+  thread: Parameters<typeof editThreadMessage>[1]["thread"],
+  args: { expectedRequestSequence: number; operationId: string },
+) {
+  const editPromise = editThreadMessage(harness.deps, {
+    environment,
+    thread,
+    payload: {
+      operationId: args.operationId,
+      expectedRequestSequence: args.expectedRequestSequence,
+      input: [{ type: "text", text: "Replacement", mentions: [] }],
+    },
+  });
+  const rewind = await waitForQueuedCommand(
+    harness,
+    (queued) => queued.command.type === "thread.rewind.prepare",
+  );
+  await reportQueuedCommandSuccess(harness, rewind, {
+    providerThreadId: `provider-staged-${args.operationId}`,
+  });
+  await expect(editPromise).resolves.toMatchObject({ ok: true });
+}
+
+function latestTurnRequest(harness: TestAppHarness, threadId: string) {
+  const event = listEvents(harness.db, { threadId })
+    .filter((row) => row.type === "client/turn/requested")
+    .at(-1);
+  return JSON.parse(event?.data ?? "null");
 }
 
 describe("editThreadMessage", () => {
@@ -1531,6 +1601,82 @@ describe("editThreadMessage", () => {
       expect(
         listQueuedThreadMessages(harness.db, thread.id),
       ).not.toContainEqual(expect.objectContaining({ id: retry.id }));
+    });
+  });
+
+  it("sends a child's held progress, visibly and from its sender, before the replacement message", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedEditableThread(harness);
+      const child = seedProgressChild(harness, thread, environment.id);
+      seedHeldProgress(harness, thread.id, child.id, "Worker progress");
+
+      await editAndRewind(harness, environment, thread, {
+        expectedRequestSequence: 7,
+        operationId: "edit-op-held-progress",
+      });
+
+      const request = latestTurnRequest(harness, thread.id);
+      expect(request.progressSenders).toEqual([child.id]);
+      expect(request.inputGroups).toEqual([
+        [
+          expect.objectContaining({
+            text: expect.stringMatching(
+              new RegExp(`thread:${child.id}[\\s\\S]*Worker progress`),
+            ),
+          }),
+        ],
+        [{ type: "text", text: "Replacement", mentions: [] }],
+      ]);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
+    });
+  });
+
+  it("keeps earlier delivered progress before newly held progress when editing", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedEditableThread(harness);
+      const earlier = seedProgressChild(harness, thread, environment.id);
+      const later = seedProgressChild(harness, thread, environment.id);
+      const earlierGroup: PromptInput[] = [
+        {
+          type: "text",
+          text: `[bb message from thread:${earlier.id}] Earlier progress`,
+          mentions: [],
+        },
+      ];
+      seedTurn(harness, {
+        inputGroups: [
+          earlierGroup,
+          [{ type: "text", text: "Message with progress", mentions: [] }],
+        ],
+        progressSenders: [earlier.id],
+        providerCheckpointId: "checkpoint-progress",
+        providerThreadId: "provider-original",
+        requestSequence: 12,
+        text: "Message with progress",
+        threadId: thread.id,
+        turnId: "turn-progress",
+      });
+      seedHeldProgress(harness, thread.id, later.id, "Later progress");
+
+      await editAndRewind(harness, environment, thread, {
+        expectedRequestSequence: 12,
+        operationId: "edit-op-progress-order",
+      });
+
+      const request = latestTurnRequest(harness, thread.id);
+      expect(request.progressSenders).toEqual([earlier.id, later.id]);
+      expect(
+        request.inputGroups?.map((group: PromptInput[]) =>
+          group.map((item) => (item.type === "text" ? item.text : "")).join(""),
+        ),
+      ).toEqual([
+        `[bb message from thread:${earlier.id}] Earlier progress`,
+        expect.stringMatching(
+          new RegExp(`thread:${later.id}[\\s\\S]*Later progress`),
+        ),
+        "Replacement",
+      ]);
+      expect(listQueuedThreadMessages(harness.db, thread.id)).toEqual([]);
     });
   });
 

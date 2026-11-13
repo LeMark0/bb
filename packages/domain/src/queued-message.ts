@@ -65,6 +65,7 @@ export const queuedMessageWaitingOnKindValues = [
   "app-update",
   "plugin",
   "superseded",
+  "progress",
 ] as const;
 export const queuedMessageWaitingOnKindSchema = z.enum(
   queuedMessageWaitingOnKindValues,
@@ -108,6 +109,10 @@ export const queuedMessageWaitingOnSchema = z.discriminatedUnion("kind", [
     reason: queuedMessageWaitReasonSchema,
   }),
   z.object({ kind: z.literal("superseded") }),
+  z.object({
+    kind: z.literal("progress"),
+    endsTurnId: z.string().min(1).optional(),
+  }),
 ]);
 export type QueuedMessageWaitingOn = z.infer<
   typeof queuedMessageWaitingOnSchema

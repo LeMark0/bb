@@ -22,6 +22,8 @@ Messaging:
     --plan                                 Send the message as the provider's /plan action
     --send-at <when>                       Dispatch at an ISO 8601 timestamp or a duration from now (30s, 10m, 2h, 7d)
     --compact-first                        Compact the idle thread's context, then send when compaction finishes
+    --progress                             Hold the message as a progress update for the target, your parent
+    --ends-turn                            With --progress: the update also stands for the end of your current turn
     --file <path>                          CLI-local absolute path, file: URL, or uploaded file path
     --image <path>                         CLI-local absolute path, file: URL, or uploaded image path
 
@@ -201,6 +203,32 @@ Queued messages:
   supports manual compaction; it cannot be combined with --send-at. The SDK
   takes `compactFirst: true` on `threads.send`, which also rejects
   `mode: "steer"`.
+
+  --progress is for a worker's update that its parent should see but need not
+  answer. It applies only when the sender (BB_THREAD_ID) is a child of the
+  target; from any other thread, or with no sender, the message is sent
+  normally and the outcome line says so. A held update is a queued row with
+  `waitingOn: progress`. It starts no turn: it goes first, in queue order and
+  framed with its sender, into the next turn the parent starts or steers for
+  another reason, such as another worker's final result, a person's message,
+  an edited and resent message, or the parent's first start. It stays in the
+  parent's timeline as a message from its sender. A person's message it goes
+  with stays editable, and an edit sends the update again before the edited
+  text. A /compact or /clear operation leaves it held for the next message. An update queued after a
+  waiting message stays for the turn after it. It
+  carries text only and cannot be combined with --mode, --model,
+  --reasoning-level, --plan, --send-at, --compact-first, --file or --image.
+  `queue send` and `queue delete` work on it as on any row.
+
+  --ends-turn says the update also stands for the end of your current turn: if
+  that turn completes while the update is still held, its completion does not
+  notify the parent, because the held update already reports it. If the parent
+  ran a turn and took the update first, the completion notifies as usual. It
+  binds to the turn running when you send it. A failed or interrupted end of that turn still notifies, and so does
+  every later turn. To deliver a result the parent must act on, finish your
+  turn without --ends-turn, or send a plain `bb thread tell`; both reach the
+  parent as before. The SDK takes `progress: true` and
+  `progressEndsTurn: true` on `threads.send`.
 
   --send-at takes an ISO 8601 timestamp (2026-08-25T09:00, local without an
   offset) or a duration from now (30s, 10m, 2h, 7d). A time that has already

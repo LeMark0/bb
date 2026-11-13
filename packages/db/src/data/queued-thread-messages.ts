@@ -484,6 +484,16 @@ function hasOrdinaryTurnEndWait(row: QueuedThreadMessageRow): boolean {
   }
 }
 
+function isProgressQueuedThreadMessage(row: QueuedThreadMessageRow): boolean {
+  if (row.waitingOn === null) return false;
+  try {
+    const parsed = JSON.parse(row.waitingOn) as { kind?: unknown };
+    return parsed.kind === "progress";
+  } catch {
+    return false;
+  }
+}
+
 export function isOrdinaryTurnEndQueuedMessage(
   row: QueuedThreadMessageRow,
 ): boolean {
@@ -524,6 +534,8 @@ function queuedMessageGroupingEnvelopeMatches(
 ): boolean {
   return (
     firstQueuedMessage !== null &&
+    !isProgressQueuedThreadMessage(firstQueuedMessage) &&
+    !isProgressQueuedThreadMessage(queuedMessage) &&
     queuedMessage.senderThreadId === firstQueuedMessage.senderThreadId &&
     queuedMessage.model === firstQueuedMessage.model &&
     queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
@@ -1996,6 +2008,95 @@ export function deleteClaimedQueuedThreadMessageBatchInTransaction(
     }
   }
   return true;
+}
+
+function heldProgressQueuedThreadMessage() {
+  return and(
+    eq(queuedThreadMessages.state, "waiting"),
+    sql`json_extract(${queuedThreadMessages.waitingOn}, '$.kind') = 'progress'`,
+  );
+}
+
+export function listHeldProgressQueuedThreadMessages(
+  db: DbQueryConnection,
+  threadId: string,
+): QueuedThreadMessageRow[] {
+  return db
+    .select()
+    .from(queuedThreadMessages)
+    .where(
+      and(
+        eq(queuedThreadMessages.threadId, threadId),
+        heldProgressQueuedThreadMessage(),
+      ),
+    )
+    .orderBy(asc(queuedThreadMessages.sortKey), asc(queuedThreadMessages.id))
+    .all();
+}
+
+export function hasHeldProgressEndingTurn(
+  db: DbQueryConnection,
+  args: { senderThreadId: string; threadId: string; turnId: string },
+): boolean {
+  return (
+    db
+      .select({ id: queuedThreadMessages.id })
+      .from(queuedThreadMessages)
+      .where(
+        and(
+          eq(queuedThreadMessages.threadId, args.threadId),
+          eq(queuedThreadMessages.senderThreadId, args.senderThreadId),
+          heldProgressQueuedThreadMessage(),
+          sql`json_extract(${queuedThreadMessages.waitingOn}, '$.endsTurnId') = ${args.turnId}`,
+        ),
+      )
+      .limit(1)
+      .get() !== undefined
+  );
+}
+
+export function deliverHeldProgressQueuedThreadMessagesInTransaction(
+  tx: DbTransaction,
+  queuedMessages: readonly QueuedThreadMessageRow[],
+): boolean {
+  if (queuedMessages.length === 0) return true;
+  const threadId = queuedMessages[0]!.threadId;
+  const current = listHeldProgressQueuedThreadMessages(tx, threadId);
+  if (
+    current.length < queuedMessages.length ||
+    queuedMessages.some(
+      (queuedMessage, index) =>
+        current[index]?.id !== queuedMessage.id ||
+        current[index]?.updatedAt !== queuedMessage.updatedAt,
+    )
+  ) {
+    return false;
+  }
+  const ids = queuedMessages.map((queuedMessage) => queuedMessage.id);
+  const now = Date.now();
+  for (const queuedMessage of queuedMessages) {
+    const previousQueuedMessage = getPreviousUnclaimedQueuedThreadMessage(
+      tx,
+      queuedMessage,
+    );
+    if (previousQueuedMessage?.groupWithNext) {
+      tx.update(queuedThreadMessages)
+        .set({ groupWithNext: false, updatedAt: now })
+        .where(eq(queuedThreadMessages.id, previousQueuedMessage.id))
+        .run();
+    }
+  }
+  const deleted = tx
+    .delete(queuedThreadMessages)
+    .where(
+      and(
+        inArray(queuedThreadMessages.id, ids),
+        heldProgressQueuedThreadMessage(),
+      ),
+    )
+    .returning({ id: queuedThreadMessages.id })
+    .all();
+  return deleted.length === ids.length;
 }
 
 /**

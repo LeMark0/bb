@@ -50,6 +50,7 @@ export function isQueuedMessageSendNowAllowed({
     case "plugin":
     case "thread-busy":
     case "superseded":
+    case "progress":
       return true;
   }
 }
@@ -91,6 +92,7 @@ export function queuedMessageWaitIcon(args: {
     case "app-update":
       return "Download";
     case "plugin":
+    case "progress":
       return null;
   }
 }
@@ -168,6 +170,8 @@ export function describeQueuedMessageWait(
       return "Sending after bb restarts to update";
     case "plugin":
       return `Held by ${args.pluginDisplayName ?? args.waitingOn.pluginId} · ${args.waitingOn.reason}`;
+    case "progress":
+      return "Progress update · sends with the next turn";
   }
 }
 

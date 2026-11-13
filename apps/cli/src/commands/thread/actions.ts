@@ -101,6 +101,8 @@ interface ThreadTellCommandOptions {
   image?: string[];
   sendAt?: string;
   compactFirst?: boolean;
+  progress?: boolean;
+  endsTurn?: boolean;
 }
 
 interface ThreadActionOptions {
@@ -141,6 +143,8 @@ interface PostThreadMessageArgs {
   images?: readonly string[];
   sendAt?: number;
   compactFirst: boolean;
+  progress: boolean;
+  progressEndsTurn: boolean;
 }
 
 // The server's own answer plus the mode we asked for. `sendAt` used to be
@@ -559,6 +563,14 @@ export function registerActionsCommands(
       "--compact-first",
       "Compact the idle thread's context first, then send this message when compaction finishes",
     )
+    .option(
+      "--progress",
+      "Hold the message as a progress update for this thread's parent: it starts no turn and goes first with the parent's next turn. Sent normally unless the sender (BB_THREAD_ID) is a child of <id>",
+    )
+    .option(
+      "--ends-turn",
+      "With --progress: the update also stands for the end of the sender's current turn, so that turn's completion does not notify the parent. A failed or interrupted turn, and every later turn, still notify",
+    )
     .option("--plan", PLAN_HELP)
     .option(
       "--file <path>",
@@ -585,6 +597,10 @@ export function registerActionsCommands(
             inline: inlineMessage,
             inlineLabel: "<message>",
           });
+          if (opts.endsTurn === true && opts.progress !== true) {
+            throw new Error("--ends-turn requires --progress");
+          }
+          if (opts.progress === true) assertProgressTellOptions(opts);
           const response = await postThreadMessage({
             getUrl,
             threadId: id,
@@ -602,12 +618,16 @@ export function registerActionsCommands(
               ? {}
               : { sendAt: parseSendAt(opts.sendAt) }),
             compactFirst: opts.compactFirst === true,
+            progress: opts.progress === true,
+            progressEndsTurn: opts.endsTurn === true,
           });
           if (outputJson(opts, { threadId: id, ...response })) return;
           console.log(
             opts.compactFirst === true
               ? `Thread ${id} compacting; the message sends when compaction finishes`
-              : describeThreadTellOutcome(id, response),
+              : opts.progress === true
+                ? describeThreadProgressOutcome(id, response)
+                : describeThreadTellOutcome(id, response),
           );
         },
       ),
@@ -728,6 +748,8 @@ async function postThreadMessage(
       ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {}),
       ...(args.sendAt === undefined ? {} : { sendAt: args.sendAt }),
       ...(args.compactFirst ? { compactFirst: true } : {}),
+      ...(args.progress ? { progress: true } : {}),
+      ...(args.progressEndsTurn ? { progressEndsTurn: true } : {}),
     });
   } catch (error: unknown) {
     throw await withRestoreEnvironmentHint(sdk, args.threadId, error);
@@ -754,6 +776,45 @@ async function withRestoreEnvironmentHint(
       ? `Its workspace was removed. Restore it with \`bb thread restore-environment ${threadId}\`, then send again.`
       : "Its workspace was removed and its environment provider cannot restore it. Start a new thread to continue.",
   });
+}
+
+const PROGRESS_EXCLUSIVE_TELL_OPTIONS = [
+  ["model", "--model"],
+  ["serviceTier", "--service-tier"],
+  ["reasoningLevel", "--reasoning-level"],
+  ["permissionMode", "--permission-mode"],
+  ["mode", "--mode"],
+  ["sendAt", "--send-at"],
+  ["compactFirst", "--compact-first"],
+  ["plan", "--plan"],
+] as const;
+
+function assertProgressTellOptions(opts: ThreadTellCommandOptions): void {
+  const conflicts: string[] = [
+    ...PROGRESS_EXCLUSIVE_TELL_OPTIONS.filter(
+      ([key]) => opts[key] !== undefined && opts[key] !== false,
+    ).map(([, flag]) => flag),
+    ...((opts.file?.length ?? 0) > 0 ? ["--file"] : []),
+    ...((opts.image?.length ?? 0) > 0 ? ["--image"] : []),
+  ];
+  if (conflicts.length > 0) {
+    throw new Error(
+      `--progress cannot be combined with ${conflicts.join(", ")}`,
+    );
+  }
+}
+
+function describeThreadProgressOutcome(
+  threadId: string,
+  response: PostThreadMessageResult,
+): string {
+  if (
+    response.delivery === "queued" &&
+    response.queuedMessage.waitingOn?.kind === "progress"
+  ) {
+    return `Thread ${threadId} progress update held; it goes with the thread's next turn`;
+  }
+  return `Not held as progress because the sender is not a child of ${threadId}. ${describeThreadTellOutcome(threadId, response)}`;
 }
 
 function describeThreadTellOutcome(
@@ -815,6 +876,8 @@ export function describeQueueWait(row: {
       return `${waitingOn.pluginId}: ${waitingOn.reason}`;
     case "superseded":
       return "not sent: a newer message was sent after it";
+    case "progress":
+      return "progress update: sends with the thread's next turn";
   }
 }
 

@@ -7,6 +7,7 @@ import {
   systemMessageSubjectSchema,
 } from "./system-message.js";
 import {
+  refineTurnRequestProgressSenders,
   refineTurnRequestRetryMarker,
   turnRequestEventDataSchema,
   turnRequestTargetSchema,
@@ -99,7 +100,8 @@ const storedTurnRequestEventDataSchema = turnRequestEventDataSchema
     systemMessageKind: systemMessageKindSchema.default("unlabeled"),
     systemMessageSubject: systemMessageSubjectSchema.nullable().default(null),
   })
-  .superRefine(refineTurnRequestRetryMarker);
+  .superRefine(refineTurnRequestRetryMarker)
+  .superRefine(refineTurnRequestProgressSenders);
 
 function toStoredThreadEventData<TEvent extends ThreadEvent>(
   event: TEvent,

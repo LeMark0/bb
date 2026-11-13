@@ -54,7 +54,10 @@ import {
   LIVE_DAEMON_COMMAND_TIMEOUT_MS,
   runLiveHostCommand,
 } from "../hosts/live-command.js";
-import { resolveMessageSenderThreadId } from "./thread-send.js";
+import {
+  resolveMessageSenderThreadId,
+  type HeldProgressPart,
+} from "./thread-send.js";
 import { attemptDispatch } from "./dispatch-attempt.js";
 import {
   requestThreadStopForCurrentState,
@@ -73,6 +76,7 @@ type ThreadRewindPrepareCommand = Extract<
 
 interface EditableTurn {
   leadingAgentOnlyInput: PromptInput[];
+  retainedProgress: HeldProgressPart[];
   currentTurnId: string;
   oldMaxSequence: number;
   precedingProviderCheckpoint: string | null;
@@ -233,9 +237,21 @@ function resolveEditableTurnCandidate(
   ) {
     conflict("The selected request is not an editable user turn");
   }
-  if (request.inputGroups !== undefined) {
+  const progressSenders = request.progressSenders ?? [];
+  if (
+    request.inputGroups !== undefined &&
+    request.inputGroups.length - progressSenders.length !== 1
+  ) {
     conflict("Grouped messages cannot be edited yet");
   }
+  const ownInput =
+    request.inputGroups === undefined
+      ? request.input
+      : request.inputGroups[progressSenders.length]!;
+  const retainedProgress = progressSenders.map((senderThreadId, index) => ({
+    input: request.inputGroups![index]!,
+    senderThreadId,
+  }));
 
   const acceptedRows = db
     .select({ sequence: events.sequence, turnId: events.turnId })
@@ -330,7 +346,8 @@ function resolveEditableTurnCandidate(
     );
   }
   return {
-    leadingAgentOnlyInput: getLeadingAgentOnlyInput(request.input),
+    leadingAgentOnlyInput: getLeadingAgentOnlyInput(ownInput),
+    retainedProgress,
     currentTurnId: accepted.turnId,
     oldMaxSequence,
     precedingProviderCheckpoint,
@@ -643,6 +660,7 @@ export async function editThreadMessage(
       source: {
         kind: "operation",
         environment: args.environment,
+        retainedProgress: target.retainedProgress,
         beforeAppendInTransaction: ({ tx }) => {
           if (getActivePendingInteractionForThread(tx, editableThread.id)) {
             conflict(
