@@ -104,6 +104,67 @@ const SUBAGENT_PRESENTATION: ThreadEventItemPresentation = {
 
 describe("v3 item projection", () => {
   it.each([
+    [
+      "node build.mjs 2>&1 | grep -v warning | tail -n 5",
+      "Ran node build.mjs 2>&1 | grep -v warning | tail -n 5",
+    ],
+    [
+      "node build.mjs && grep warning build.log",
+      "Ran node build.mjs && grep warning build.log",
+    ],
+    [
+      "node build.mjs; grep warning build.log",
+      "Ran node build.mjs; grep warning build.log",
+    ],
+    ["grep warning build.log | tail -n 5", "Searched for warning in build.log"],
+    [
+      "cd packages/app && grep warning build.log",
+      "Searched for warning in build.log",
+    ],
+    [
+      "cd packages/app && node build.mjs | grep warning",
+      "Ran cd packages/app && node build.mjs | grep warning",
+    ],
+  ])(
+    "anchors compound command titles to the first command after cd: %s",
+    (command, expectedTitle) => {
+      const event = createTimelineEventFactory({
+        threadId: "thread-1",
+        turnId: "turn-1",
+      });
+      const rendered = renderTimelineFixture({
+        completedTurnDisplay: "flat",
+        events: [
+          event.turnStarted({ createdAt: 0 }),
+          event.commandStarted({
+            itemId: "command-1",
+            command,
+            createdAt: 1_000,
+          }),
+          event.commandCompleted({
+            itemId: "command-1",
+            command,
+            exitCode: 0,
+            createdAt: 2_000,
+          }),
+          event.assistantCompleted({
+            itemId: "answer",
+            text: "Done.",
+            createdAt: 3_000,
+          }),
+          event.turnCompleted({ createdAt: 4_000 }),
+        ],
+        projectionOptions: { turnMessageDetail: "full" },
+      });
+      const [viewRow] = buildTimelineViewRows([
+        workRow(rendered.rows, "command", "command-1"),
+      ]);
+      expect(viewRow && plainTitle(viewRow)).toBe(expectedTitle);
+      expect(rendered.text).toContain(expectedTitle);
+    },
+  );
+
+  it.each([
     { decision: "allow_once", interleaved: false },
     { decision: "allow_for_session", interleaved: true },
   ] as const)(
@@ -376,6 +437,43 @@ describe("v3 item projection", () => {
     const row = workRow(rendered.rows, "command", "cmd-1");
     expect(row.presentation).toEqual(SANDBOX_ESCAPED_COMMAND_PRESENTATION);
     expect(plainTitle(row)).toContain("(Outside of sandbox)");
+  });
+
+  it("carries a command description from the started item onto the row title", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const rendered = renderTimelineFixture({
+      events: [
+        event.turnStarted({ turnId: "turn-1", createdAt: 0 }),
+        event.commandStarted({
+          turnId: "turn-1",
+          itemId: "cmd-1",
+          command: "pnpm test",
+          description: "Run the test suite",
+          presentation: SANDBOX_ESCAPED_COMMAND_PRESENTATION,
+          createdAt: 1_000,
+        }),
+        event.commandCompleted({
+          turnId: "turn-1",
+          itemId: "cmd-1",
+          command: "pnpm test",
+          presentation: SANDBOX_ESCAPED_COMMAND_PRESENTATION,
+          status: "failed",
+          exitCode: 127,
+          createdAt: 2_000,
+        }),
+      ],
+      projectionOptions: { threadStatus: "idle", turnMessageDetail: "full" },
+    });
+
+    const row = workRow(rendered.rows, "command", "cmd-1");
+    expect(row).toMatchObject({
+      command: "pnpm test",
+      description: "Run the test suite",
+      exitCode: 127,
+    });
+    expect(plainTitle(row)).toBe(
+      "Run the test suite (Outside of sandbox) (error)",
+    );
   });
 
   it("groups v3 exploration rows into one exploration bundle like legacy reads", () => {

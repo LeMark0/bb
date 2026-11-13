@@ -26,6 +26,7 @@ export function listEntry(
     sectionId: null,
     status: "active",
     parentThreadId: "thr_root",
+    parentNotifications: "auto",
     lifecycleOwnerThreadId: null,
     sourceThreadId: null,
     originKind: null,
@@ -44,7 +45,6 @@ export function listEntry(
       activeBackgroundAgentCount: 0,
       activeBackgroundCommandCount: 0,
       activePlanModeCount: 0,
-      activeGoalCount: 0,
     },
     queuedWork: "none",
     pinSortKey: null,
@@ -87,14 +87,14 @@ export function fakeWorkersSdk(args: {
         const offset = query?.offset ?? 0;
         return siblings.slice(offset, offset + (query?.limit ?? siblings.length));
       },
-      timeline: async (query) => {
+      timeline: (async (query: { threadId: string }) => {
         timelineCalls.push(query.threadId);
         const timeline = args.timelines?.[query.threadId] ?? {
           rows: [],
           pendingTodos: null,
         };
         return timeline as unknown as TimelineResult;
-      },
+      }) as WorkersSdk["threads"]["timeline"],
     },
   };
   return {

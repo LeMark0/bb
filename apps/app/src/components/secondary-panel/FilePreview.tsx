@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { FilePreviewScrollPositionContext } from "./filePreviewScrollPositionContext";
+import { FilePreviewRenderPreviewContext } from "./filePreviewRenderPreviewContext";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Button } from "@bb/shared-ui/button";
 import {
@@ -31,7 +32,7 @@ import {
 import { EmptyStatePanel } from "@bb/shared-ui/empty-state";
 import { CopyButton } from "@/components/ui/copy-button.js";
 import { Icon } from "@bb/shared-ui/icon";
-import { OpenInEditorButton } from "@/components/ui/open-in-editor-button.js";
+import { OpenInEditorButton } from "@bb/shared-ui/open-in-editor-button";
 import { useAppCommandShortcut } from "@/components/commands/AppCommandProvider";
 import { AppCommandShortcutHint } from "@/components/commands/AppCommandShortcutHint";
 import type { MarkdownLinkRouting } from "@/components/ui/markdown-link-routing.js";
@@ -44,16 +45,16 @@ import {
   TooltipTrigger,
 } from "@bb/shared-ui/tooltip";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
-import { formatByteSize } from "@/lib/format-byte-size";
+import { formatByteSize } from "@bb/shared-ui/lib/format-byte-size";
 import { saveFile } from "@/lib/save-file";
 import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import type {
   FilePreviewLineRange,
   UnsupportedFilePreviewReason,
-  WorkspaceFilePreviewStatusLabel,
 } from "@bb/client-core";
 import {
   DEFAULT_CODE_OVERFLOW_MODE,
+  LINE_WRAP_LABEL,
   type CodeOverflowMode,
   type CodeOverflowModeChangeHandler,
 } from "@/lib/code-overflow-mode";
@@ -109,7 +110,13 @@ export type FilePreviewState =
       textPreviewKind: TextFilePreviewKind | null;
     };
 
+interface FilePreviewDownload {
+  url: string;
+  fileName: string;
+}
+
 interface FilePreviewProps {
+  download?: FilePreviewDownload | null;
   state: FilePreviewState;
   path: string;
   copyPath?: string | null;
@@ -119,7 +126,7 @@ interface FilePreviewProps {
   onRefresh?: () => void;
   isRefreshing?: boolean;
   markdownLinkRouting?: MarkdownLinkRouting;
-  statusLabel?: WorkspaceFilePreviewStatusLabel | null;
+  statusLabel?: string | null;
 }
 
 interface FilePreviewBodyProps {
@@ -141,6 +148,7 @@ interface HtmlFilePreviewBodyProps {
 }
 
 interface FilePreviewHeaderProps {
+  download: FilePreviewDownload | null;
   previewIcon: ReactNode;
   path: string;
   copyPath: string | null;
@@ -149,7 +157,7 @@ interface FilePreviewHeaderProps {
   onOpenInEditor?: (path: string) => void;
   onRefresh?: () => void;
   isRefreshing: boolean;
-  statusLabel: WorkspaceFilePreviewStatusLabel | null;
+  statusLabel: string | null;
   toggleKind: FilePreviewToggleKind | null;
   showLineOverflowToggle: boolean;
   lineOverflowMode: CodeOverflowMode;
@@ -285,10 +293,6 @@ function getFileContentsCopyLabel(kind: FilePreviewToggleKind | null): string {
     return "Copy HTML source";
   }
   return "Copy file contents";
-}
-
-function getLineWrapToggleLabel(lineOverflowMode: CodeOverflowMode): string {
-  return lineOverflowMode === "wrap" ? "Disable line wrap" : "Wrap lines";
 }
 
 function getFilePreviewLineRange(
@@ -448,6 +452,7 @@ export function getCsvTruncationNote(
 }
 
 export function FilePreview({
+  download = null,
   state,
   path,
   copyPath = null,
@@ -512,36 +517,57 @@ export function FilePreview({
     );
   }, [filePreviewLineRange, path, toggleKind]);
 
-  const usesIframeLayout = state.kind === "html" && viewMode === "preview";
+  const renderPreview = useContext(FilePreviewRenderPreviewContext);
   const bodyViewMode: FilePreviewViewMode =
     toggleKind === null ? "preview" : viewMode;
+  const customPreviewFile =
+    renderPreview !== null &&
+    toggleKind !== null &&
+    rawContents !== null &&
+    download !== null &&
+    bodyViewMode === "preview"
+      ? { content: rawContents, url: toAbsolutePreviewUrl(download.url) }
+      : null;
+  const usesCustomPreviewLayout = customPreviewFile !== null;
+  const usesIframeLayout =
+    state.kind === "html" && viewMode === "preview" && !usesCustomPreviewLayout;
   const usesCodeLayout = usesCodeViewLayout(state, bodyViewMode);
   const showLineOverflowToggle = usesCodeLayout;
   const usesMarkdownPreviewLayout =
     state.kind === "ready" &&
     state.textPreviewKind === "markdown" &&
-    bodyViewMode === "preview";
+    bodyViewMode === "preview" &&
+    !usesCustomPreviewLayout;
   const usesCsvPreviewLayout =
     state.kind === "ready" &&
     state.textPreviewKind === "csv" &&
-    bodyViewMode === "preview";
+    bodyViewMode === "preview" &&
+    !usesCustomPreviewLayout;
   const usesFullHeightLayout =
-    usesIframeLayout || usesCsvPreviewLayout || usesCodeLayout;
-  const usesContentHeightLayout = usesMarkdownPreviewLayout;
+    usesIframeLayout ||
+    usesCsvPreviewLayout ||
+    usesCodeLayout ||
+    usesMarkdownPreviewLayout ||
+    usesCustomPreviewLayout;
 
   return (
     <div
       className={
         usesFullHeightLayout
-          ? "@container/page flex h-full min-h-0 flex-col"
-          : usesContentHeightLayout
-            ? "@container/page flex min-h-full flex-col"
-            : "@container/page min-h-full"
+          ? cn(
+              "@container/page flex h-full min-h-0 flex-col",
+              usesMarkdownPreviewLayout && "overflow-y-auto",
+            )
+          : "@container/page min-h-full"
+      }
+      data-file-preview-scroll-container={
+        usesMarkdownPreviewLayout ? "" : undefined
       }
       style={FILE_PREVIEW_WRAPPER_STYLE}
     >
       {headerMode === "file" ? (
         <FilePreviewHeader
+          download={download}
           previewIcon={
             <FilePreviewIcon
               key={path}
@@ -568,15 +594,21 @@ export function FilePreview({
           onViewModeChange={setViewMode}
         />
       ) : null}
-      <FilePreviewBody
-        iframePreview={iframePreview}
-        state={state}
-        path={path}
-        lineOverflowMode={lineOverflowMode}
-        viewMode={bodyViewMode}
-        markdownLinkRouting={markdownLinkRouting}
-        onSelectionAddToChat={onSelectionAddToChat}
-      />
+      {renderPreview !== null && customPreviewFile !== null ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {renderPreview(customPreviewFile)}
+        </div>
+      ) : (
+        <FilePreviewBody
+          iframePreview={iframePreview}
+          state={state}
+          path={path}
+          lineOverflowMode={lineOverflowMode}
+          viewMode={bodyViewMode}
+          markdownLinkRouting={markdownLinkRouting}
+          onSelectionAddToChat={onSelectionAddToChat}
+        />
+      )}
     </div>
   );
 }
@@ -656,6 +688,7 @@ function FilePreviewBody({
 }
 
 function FilePreviewHeader({
+  download,
   previewIcon,
   path,
   copyPath,
@@ -694,8 +727,9 @@ function FilePreviewHeader({
               ({statusLabel})
             </span>
           )}
-          {!isNarrow ? (
-            <TooltipProvider delayDuration={300}>
+          <TooltipProvider delayDuration={300}>
+            {!isNarrow ? (
+              <>
               {onRefresh ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -721,6 +755,23 @@ function FilePreviewHeader({
                   </TooltipContent>
                 </Tooltip>
               ) : null}
+              {download !== null ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={FILE_PREVIEW_HEADER_ICON_BUTTON_CLASS}
+                      onClick={() => void saveFile(download)}
+                      aria-label="Download"
+                    >
+                      <Icon name="Download" aria-hidden />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Download</TooltipContent>
+                </Tooltip>
+              ) : null}
               {rawContents === null ? null : (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -738,6 +789,8 @@ function FilePreviewHeader({
                   </TooltipContent>
                 </Tooltip>
               )}
+              </>
+            ) : null}
               {externalUrl === null ? null : (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -764,7 +817,7 @@ function FilePreviewHeader({
                   </TooltipContent>
                 </Tooltip>
               )}
-              {onOpenInEditor ? (
+              {!isNarrow && onOpenInEditor ? (
                 <>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -788,8 +841,7 @@ function FilePreviewHeader({
                   <AppCommandShortcutHint shortcut={openShortcut} />
                 </>
               ) : null}
-            </TooltipProvider>
-          ) : null}
+          </TooltipProvider>
         </div>
         {showHeaderControls || isNarrow ? (
           <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -878,6 +930,11 @@ function FilePreviewHeader({
                       <Icon name="Copy" aria-hidden /> {copyFileContentsLabel}
                     </DropdownMenuItem>
                   ) : null}
+                  {download !== null ? (
+                    <DropdownMenuItem onSelect={() => void saveFile(download)}>
+                      <Icon name="Download" aria-hidden /> Download
+                    </DropdownMenuItem>
+                  ) : null}
                   {onRefresh ? (
                     <DropdownMenuItem
                       disabled={isRefreshing}
@@ -885,17 +942,6 @@ function FilePreviewHeader({
                     >
                       <Icon name="RotateCcw" aria-hidden />{" "}
                       {isRefreshing ? "Refreshing file" : "Refresh file"}
-                    </DropdownMenuItem>
-                  ) : null}
-                  {externalUrl !== null ? (
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        openUrlInExternalBrowser(
-                          toAbsolutePreviewUrl(externalUrl),
-                        )
-                      }
-                    >
-                      <Icon name="Globe" aria-hidden /> Open in external browser
                     </DropdownMenuItem>
                   ) : null}
                   {onOpenInEditor ? (
@@ -913,7 +959,8 @@ function FilePreviewHeader({
                           onLineOverflowModeChange(checked ? "wrap" : "scroll")
                         }
                       >
-                        <Icon name="TextWrap" aria-hidden /> Wrap lines
+                        <Icon name="TextWrap" aria-hidden />
+                        {LINE_WRAP_LABEL}
                       </DropdownMenuCheckboxItem>
                     </>
                   ) : null}
@@ -935,8 +982,6 @@ function FilePreviewLineWrapButton({
     return null;
   }
 
-  const label = getLineWrapToggleLabel(lineOverflowMode);
-
   return (
     <TooltipProvider delayDuration={300}>
       <Tooltip>
@@ -949,7 +994,7 @@ function FilePreviewLineWrapButton({
               FILE_PREVIEW_HEADER_ICON_BUTTON_CLASS,
               "text-muted-foreground",
             )}
-            aria-label={label}
+            aria-label={LINE_WRAP_LABEL}
             aria-pressed={lineOverflowMode === "wrap"}
             onClick={() => {
               onLineOverflowModeChange(
@@ -960,7 +1005,7 @@ function FilePreviewLineWrapButton({
             <Icon name="TextWrap" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">{label}</TooltipContent>
+        <TooltipContent side="bottom">{LINE_WRAP_LABEL}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
@@ -1018,7 +1063,10 @@ function MarkdownFilePreview({
     return () => container.removeEventListener("scroll", savePosition);
   }, [scrollPosition, file.name, file.contents]);
   return (
-    <SecondaryPanelSelectionActions onSelectionAddToChat={onSelectionAddToChat}>
+    <SecondaryPanelSelectionActions
+      markdown
+      onSelectionAddToChat={onSelectionAddToChat}
+    >
       <div ref={contentRef} className="flex-auto bg-background px-4 py-4">
         <MarkdownPreview
           allowHtml

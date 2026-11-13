@@ -157,19 +157,19 @@
   "scripts": {
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "lint": "oxlint src",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsrs --noEmit",
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@bb/domain": "workspace:*",
     "@bb/process-utils": "workspace:*",
     "fs-native-extensions": "1.5.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@bb/tsconfig": "workspace:*",
-    "@types/node": "^22.0.0",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-7": "npm:typescript@^7.0.2"
+    "@types/node": "^22.20.5",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

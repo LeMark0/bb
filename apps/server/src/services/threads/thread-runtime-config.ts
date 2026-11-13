@@ -2,7 +2,15 @@ import {
   resolveHostEnvironment,
   mergeHostAndProviderEnvironment,
 } from "../hosts/host-environment.js";
-import { getEnvironment, getHost, getProject } from "@bb/db";
+import {
+  getEnvironment,
+  getHost,
+  getProject,
+  getThread,
+  type DbConnection,
+  type DbTransaction,
+} from "@bb/db";
+import { PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS } from "@get-bb/plugin-sdk/internal/host-policy";
 import type {
   DynamicTool,
   InstructionMode,
@@ -12,6 +20,7 @@ import type {
   EnvironmentStatus,
 } from "@bb/domain";
 import type {
+  HostDaemonCommand,
   HostDaemonContributedEnvEntry,
   HostDaemonInjectedSkillSource,
 } from "@bb/host-daemon-contract";
@@ -39,9 +48,7 @@ import { resolveDeprecatedWorkspaceProvisionType } from "../environments/environ
 import { markTurnTraceSpan } from "../system/turn-trace.js";
 
 const UPDATE_ENVIRONMENT_DIRECTORY_INSTRUCTIONS =
-  "If the user asks you to move this thread to another checkout, worktree, or directory, make sure the target directory exists, then call `update_environment_directory` with its absolute path. After it succeeds, stop work in the current turn; future turns will run in the updated environment.";
-
-const PLUGIN_INSTRUCTION_CONTRIBUTION_MAX_CHARS = 4096;
+  "If the user asks you to move this thread to another checkout, worktree, or directory, make sure the target directory exists, then call `update_environment_directory` with its absolute path. After it succeeds, end the current turn; bb starts the next turn in the updated environment automatically so you can continue there.";
 
 export interface ThreadRuntimeCommandEnvironment {
   hostId: string;
@@ -56,8 +63,10 @@ interface ResolveThreadRuntimeCommandConfigArgs {
   thread: Thread;
 }
 
-interface ResolvePermissionEscalationArgs {
+export interface ResolvePermissionEscalationArgs {
   initiator: ThreadTurnInitiator;
+  senderThreadId: string | null;
+  threadId: string;
 }
 
 export interface ResolvedThreadRuntimeCommandConfig {
@@ -106,13 +115,56 @@ function resolveDynamicTools(
 }
 
 export function resolvePermissionEscalation(
+  db: DbConnection | DbTransaction,
   args: ResolvePermissionEscalationArgs,
 ): PermissionEscalation {
-  if (args.initiator !== "user") {
-    return "deny";
+  if (args.initiator === "user") {
+    return "ask";
   }
+  if (args.initiator === "agent" && senderIsCurrentParent(db, args)) {
+    return "ask";
+  }
+  return "deny";
+}
 
-  return "ask";
+type EscalatingHostCommand = Extract<
+  HostDaemonCommand,
+  { type: "thread.start" | "thread.rewind.prepare" | "turn.submit" }
+>;
+
+export function withCurrentPermissionEscalation<
+  TCommand extends EscalatingHostCommand,
+>(
+  db: DbConnection | DbTransaction,
+  command: TCommand,
+  args: ResolvePermissionEscalationArgs,
+): TCommand {
+  const options = command.options;
+  if (options.permissionEscalation !== "ask") {
+    return command;
+  }
+  if (resolvePermissionEscalation(db, args) === "ask") {
+    return command;
+  }
+  return { ...command, options: { ...options, permissionEscalation: "deny" } };
+}
+
+function senderIsCurrentParent(
+  db: DbConnection | DbTransaction,
+  args: Pick<ResolvePermissionEscalationArgs, "senderThreadId" | "threadId">,
+): boolean {
+  if (args.senderThreadId === null) {
+    return false;
+  }
+  const target = getThread(db, args.threadId);
+  if (target === null || target.deletedAt !== null) {
+    return false;
+  }
+  if (target.parentThreadId !== args.senderThreadId) {
+    return false;
+  }
+  const sender = getThread(db, args.senderThreadId);
+  return sender !== null && sender.deletedAt === null;
 }
 
 export async function resolveThreadRuntimeCommandConfig(
@@ -141,7 +193,7 @@ export async function resolveThreadRuntimeCommandConfig(
   });
   markTurnTraceSpan("runtimeConfig.workspaceRead");
   const pluginSkillRoots = getPluginSkillRootContributions();
-  const skillIdsByPlugin = discoverPluginSkillIds(deps.logger, {
+  const skillIdsByPlugin = await discoverPluginSkillIds(deps.logger, {
     pluginSkillRoots,
     skillTreeRegistry: deps.skillTreeRegistry,
   });
@@ -201,11 +253,13 @@ export async function resolveThreadRuntimeCommandConfig(
     }),
   );
   markTurnTraceSpan("runtimeConfig.env");
-  const injectedSkillSources = resolveSkillCatalog(deps, {
-    projectSkillSources: workspaceAgentContext.projectSkillSources,
-    sharedSkillSources: workspaceAgentContext.sharedSkills.runtimeSources,
-    pluginSkillSelections: conditionalConfiguration.selectedSkillIdsByPlugin,
-  }).map((entry) => entry.runtimeSource);
+  const injectedSkillSources = (
+    await resolveSkillCatalog(deps, {
+      projectSkillSources: workspaceAgentContext.projectSkillSources,
+      sharedSkillSources: workspaceAgentContext.sharedSkills.runtimeSources,
+      pluginSkillSelections: conditionalConfiguration.selectedSkillIdsByPlugin,
+    })
+  ).map((entry) => entry.runtimeSource);
   const dataDirAgentInstructions = readDataDirAgentInstructions(
     deps.logger,
     deps.config.dataDir,
@@ -247,8 +301,8 @@ export async function resolveThreadRuntimeCommandConfig(
       continue;
     }
     if (text === null || text.trim().length === 0) continue;
-    if (text.length > PLUGIN_INSTRUCTION_CONTRIBUTION_MAX_CHARS) {
-      text = text.slice(0, PLUGIN_INSTRUCTION_CONTRIBUTION_MAX_CHARS);
+    if (text.length > PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS) {
+      text = text.slice(0, PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS);
     }
     instructionSections.push(
       `The following instructions come from the BB plugin "${contribution.pluginId}":`,

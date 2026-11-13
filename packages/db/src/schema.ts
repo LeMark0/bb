@@ -10,11 +10,15 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
-import { queuedMessageStateValues } from "@bb/domain/queued-message-lifecycle";
+import {
+  queuedMessageDeliveryModeValues,
+  queuedMessageStateValues,
+} from "@bb/domain/queued-message-lifecycle";
 import { threadStatusValues } from "@bb/domain/thread-status";
 import { startedOnBehalfOfInitiatorValues } from "@bb/domain/started-on-behalf-of";
 import { threadCreateOriginValues } from "@bb/domain/thread-create-origin";
 import { threadOriginKindValues } from "@bb/domain/thread-origin-kind";
+import { threadParentNotificationsValues } from "@bb/domain/thread-parent-notifications";
 import { threadVisibilityValues } from "@bb/domain/thread-visibility";
 import type {
   EnvironmentProviderSelection,
@@ -614,6 +618,7 @@ export const threads = sqliteTable(
     status: text("status", { enum: threadStatusValues })
       .notNull()
       .default("starting"),
+    statusChangedAt: integer("status_changed_at").notNull().default(0),
     startupContext: text("startup_context"),
     parentThreadId: text("parent_thread_id").references(
       (): AnySQLiteColumn => threads.id,
@@ -634,6 +639,11 @@ export const threads = sqliteTable(
     visibility: text("visibility", { enum: threadVisibilityValues })
       .notNull()
       .default("visible"),
+    parentNotifications: text("parent_notifications", {
+      enum: threadParentNotificationsValues,
+    })
+      .notNull()
+      .default("auto"),
     archivedAt: integer("archived_at"),
     pinnedAt: integer("pinned_at"),
     pinSortKey: text("pin_sort_key"),
@@ -1022,6 +1032,13 @@ export const queuedThreadMessages = sqliteTable(
     retryOfTurnRequestId: text("retry_of_turn_request_id"),
     retryAttempt: integer("retry_attempt"),
     retryReason: text("retry_reason"),
+    deliveryMode: text("delivery_mode", {
+      enum: queuedMessageDeliveryModeValues,
+    })
+      .notNull()
+      .default("steer"),
+    coalesceKey: text("coalesce_key"),
+    coalesceState: text("coalesce_state"),
     claimedAt: integer("claimed_at"),
     claimToken: text("claim_token"),
     editHeldUntil: integer("edit_held_until"),
@@ -1050,6 +1067,9 @@ export const queuedThreadMessages = sqliteTable(
       table.nextAttemptAt,
       table.id,
     ),
+    index("queued_thread_messages_coalesce_idx")
+      .on(table.threadId, table.coalesceKey)
+      .where(sql`${table.coalesceKey} IS NOT NULL`),
     index("queued_thread_messages_wait_holder_idx")
       .on(table.waitHolder, table.id)
       .where(sql`${table.waitHolder} IS NOT NULL`),
@@ -1181,8 +1201,15 @@ export const terminalSessions = sqliteTable(
       table.environmentId,
       table.status,
     ),
+    index("terminal_sessions_status_thread_idx").on(
+      table.status,
+      table.threadId,
+    ),
     index("terminal_sessions_host_status_idx").on(table.hostId, table.status),
     index("terminal_sessions_daemon_session_idx").on(table.daemonSessionId),
+    index("terminal_sessions_exited_prune_idx")
+      .on(table.updatedAt, table.id)
+      .where(sql`${table.status} = 'exited'`),
   ],
 );
 

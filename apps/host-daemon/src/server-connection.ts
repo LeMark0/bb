@@ -85,6 +85,8 @@ function recoverableMessageKey(
   switch (message.type) {
     case "connect-tunnel.identity":
       return "connect-tunnel.identity";
+    case "connect-next.status":
+      return "connect-next.status";
     case "environment-change":
       return `environment-change\u0000${message.environmentId}\u0000${message.change}`;
     case "environment-metadata-change":
@@ -346,6 +348,7 @@ export class ServerConnection {
         dataDir: this.options.dataDir,
         localApiPort: this.options.localApiPort,
         activeThreads: this.options.getActiveThreads?.() ?? [],
+        openThreadWork: this.options.getOpenThreadWork?.() ?? [],
         undeliveredEventThreadIds:
           this.options.getUndeliveredEventThreadIds?.() ?? [],
         loadedEnvironments: this.options.getLoadedEnvironments?.() ?? [],
@@ -353,6 +356,9 @@ export class ServerConnection {
       this.session = session;
       this.machineEnvironmentRevision = session.machineEnvironment.revision;
       this.options.onMachineEnvironment?.(session.machineEnvironment);
+      this.options.onIdleProviderSessionTimeout?.(
+        session.idleProviderSessionTimeoutMinutes,
+      );
       return session;
     } catch (error) {
       if (
@@ -621,6 +627,14 @@ export class ServerConnection {
       return;
     }
 
+    if (message.data.type === "interactive-requests.end") {
+      this.options.onInteractiveRequestsEnded?.({
+        reason: message.data.reason,
+        requests: message.data.requests,
+      });
+      return;
+    }
+
     if (message.data.type === "machine.shutdown") {
       void Promise.resolve(this.options.onMachineShutdown?.()).catch(
         (error) => {
@@ -647,6 +661,13 @@ export class ServerConnection {
           "Failed to switch this daemon to the moved bb server",
         );
       });
+      return;
+    }
+
+    if (message.data.type === "provider-session-policy.replace") {
+      this.options.onIdleProviderSessionTimeout?.(
+        message.data.idleProviderSessionTimeoutMinutes,
+      );
       return;
     }
 
@@ -715,6 +736,22 @@ export class ServerConnection {
           "Connect shares handler failed",
         );
       });
+      return;
+    }
+
+    if (message.data.type === "connect-next.replace") {
+      const nextMessage = message.data;
+      try {
+        this.options.onConnectNextReplace?.(nextMessage);
+      } catch (error) {
+        this.options.logger.warn(
+          {
+            generation: nextMessage.generation,
+            ...runtimeErrorLogFields(error),
+          },
+          "Connect next handler failed",
+        );
+      }
       return;
     }
 

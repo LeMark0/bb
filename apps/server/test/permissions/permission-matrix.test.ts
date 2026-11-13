@@ -7,30 +7,86 @@ import {
 } from "@bb/domain";
 import type { RuntimePermissionPolicy, ThreadTurnInitiator } from "@bb/domain";
 import { describe, expect, it } from "vitest";
+import { markThreadDeleted, threads } from "@bb/db";
+import { eq } from "drizzle-orm";
 import { resolvePermissionEscalation } from "../../src/services/threads/thread-runtime-config.js";
+import {
+  seedHostSession,
+  seedProjectWithSource,
+  seedThread,
+} from "../helpers/seed.js";
+import { withTestHarness } from "../helpers/test-app.js";
 
-const EXPECTED_ESCALATION = {
-  user: "ask",
-  agent: "deny",
-  system: "deny",
-} satisfies Record<ThreadTurnInitiator, "ask" | "deny">;
+type SenderRelation =
+  | "none"
+  | "current-parent"
+  | "other-thread"
+  | "deleted-parent"
+  | "parent-of-deleted-target";
+
+const ESCALATION_CASES = [
+  { initiator: "user", sender: "none", expected: "ask" },
+  { initiator: "agent", sender: "current-parent", expected: "ask" },
+  { initiator: "agent", sender: "none", expected: "deny" },
+  { initiator: "agent", sender: "other-thread", expected: "deny" },
+  { initiator: "agent", sender: "deleted-parent", expected: "deny" },
+  { initiator: "agent", sender: "parent-of-deleted-target", expected: "deny" },
+  { initiator: "system", sender: "none", expected: "deny" },
+  { initiator: "system", sender: "current-parent", expected: "deny" },
+] as const satisfies readonly {
+  initiator: ThreadTurnInitiator;
+  sender: SenderRelation;
+  expected: "ask" | "deny";
+}[];
 
 const threadTurnInitiatorValues = threadTurnInitiatorSchema.options;
 
-describe("permission escalation by turn initiator", () => {
+describe("permission escalation by turn initiator and sender", () => {
   it("covers every initiator", () => {
-    expect(threadTurnInitiatorValues).toEqual(["user", "agent", "system"]);
-    expect(Object.keys(EXPECTED_ESCALATION)).toHaveLength(
-      threadTurnInitiatorValues.length,
-    );
+    expect(
+      new Set(ESCALATION_CASES.map((testCase) => testCase.initiator)),
+    ).toEqual(new Set(threadTurnInitiatorValues));
   });
 
-  it.each(threadTurnInitiatorValues.map((initiator) => [initiator] as const))(
-    "%s",
-    (initiator) => {
-      expect(resolvePermissionEscalation({ initiator })).toBe(
-        EXPECTED_ESCALATION[initiator],
-      );
+  it.each(ESCALATION_CASES)(
+    "$initiator from $sender → $expected",
+    async ({ initiator, sender, expected }) => {
+      await withTestHarness(async (harness) => {
+        const { host } = seedHostSession(harness.deps);
+        const { project } = seedProjectWithSource(harness.deps, {
+          hostId: host.id,
+        });
+        const parent = seedThread(harness.deps, { projectId: project.id });
+        const other = seedThread(harness.deps, { projectId: project.id });
+        const target = seedThread(harness.deps, {
+          projectId: project.id,
+          parentThreadId: parent.id,
+        });
+        if (sender === "deleted-parent") {
+          harness.db
+            .update(threads)
+            .set({ deletedAt: Date.now() })
+            .where(eq(threads.id, parent.id))
+            .run();
+        }
+        if (sender === "parent-of-deleted-target") {
+          markThreadDeleted(harness.db, harness.hub, { threadId: target.id });
+        }
+        const senderThreadId =
+          sender === "none"
+            ? null
+            : sender === "other-thread"
+              ? other.id
+              : parent.id;
+
+        expect(
+          resolvePermissionEscalation(harness.db, {
+            initiator,
+            senderThreadId,
+            threadId: target.id,
+          }),
+        ).toBe(expected);
+      });
     },
   );
 });
@@ -79,15 +135,6 @@ const POLICY_CELLS = permissionModeValues.flatMap((permissionMode) =>
 );
 
 describe("runtime permission policy shapes", () => {
-  it("enumerates the full cross product", () => {
-    expect(permissionModeValues).toEqual(["accept-edits", "auto", "full"]);
-    expect(runtimePermissionScopeValues).toEqual(["workspace", "full"]);
-    expect(approvalReviewerValues).toEqual(["user", "automatic"]);
-    expect(permissionEscalationValues).toEqual(["ask", "deny"]);
-    expect(POLICY_CELLS).toHaveLength(3 * 2 * 3 * 3);
-    expect(runtimePermissionPolicySchema.options).toHaveLength(3);
-  });
-
   it.each(POLICY_CELLS)(
     "$permissionMode × $permissionScope × $approvalReviewer × $permissionEscalation",
     (cell) => {

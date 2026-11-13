@@ -7,6 +7,7 @@ import type { DbConnection, DbTransaction, EnvironmentRow } from "@bb/db";
 import type {
   ClientTurnRequestId,
   PromptInput,
+  QueuedMessageSystemNotice,
   ResolvedThreadExecutionOptions,
   Thread,
   ThreadTurnInitiator,
@@ -47,7 +48,10 @@ import {
   requireReadyThreadEnvironment,
 } from "./thread-turn-dispatch.js";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
+import {
+  resolvePermissionEscalation,
+  withCurrentPermissionEscalation,
+} from "./thread-runtime-config.js";
 import {
   buildThreadStatusChangeMetadata,
   resolveThreadRuntimeState,
@@ -77,7 +81,14 @@ import {
   type GroupedPrompt,
   type PromptWithGroups,
 } from "./deferred-first-turn-context.js";
-import type { TelemetryEvent } from "../system/telemetry.js";
+import type {
+  TelemetryEvent,
+  TelemetryInitiator,
+} from "../system/telemetry.js";
+import {
+  initiatorTelemetryProperty,
+  resolveTelemetryInitiator,
+} from "./telemetry-initiator.js";
 import { assertThreadHostAcceptsWork } from "./thread-host-admission.js";
 
 type SendThreadMessageMode = SendMessageRequest["mode"];
@@ -87,6 +98,42 @@ type SendThreadMessageTrigger = "auto-dispatch" | "user";
 type SendThreadMessagePayload = SendMessageRequest & {
   inputGroups?: PromptInput[][];
 };
+
+export interface HeldProgressPart {
+  input: PromptInput[];
+  senderThreadId: string;
+}
+
+interface PromptWithProgress {
+  input: PromptInput[];
+  inputGroups?: PromptInput[][];
+  progressSenders?: string[];
+}
+
+export function prependHeldProgress(
+  prompt: { input: PromptInput[]; inputGroups?: PromptInput[][] },
+  parts: readonly HeldProgressPart[],
+): PromptWithProgress {
+  if (parts.length === 0) return prompt;
+  const inputGroups = [
+    ...parts.map((part) => part.input),
+    ...(prompt.inputGroups ?? [prompt.input]),
+  ];
+  return {
+    input: flattenPromptInputGroups(inputGroups),
+    inputGroups,
+    progressSenders: parts.map((part) => part.senderThreadId),
+  };
+}
+
+function ownInputOf(prompt: PromptWithProgress): PromptInput[] {
+  return prompt.progressSenders === undefined ||
+    prompt.inputGroups === undefined
+    ? prompt.input
+    : flattenPromptInputGroups(
+        prompt.inputGroups.slice(prompt.progressSenders.length),
+      );
+}
 
 interface SendThreadMessageArgs {
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
@@ -101,7 +148,10 @@ interface SendThreadMessageArgs {
     forkSourceProviderThreadId: string | null;
     onCommandSettled?: () => void | Promise<void>;
   };
+  leadingProgress?: HeldProgressPart[];
+  originPluginId: string | null;
   payload: SendThreadMessagePayload;
+  systemNotice?: QueuedMessageSystemNotice;
   thread: Thread;
   trigger: SendThreadMessageTrigger;
 }
@@ -152,11 +202,15 @@ interface AppendAndQueueSendThreadMessageArgs {
   environmentId: string | null;
   execution: ResolvedThreadExecutionOptions;
   initiator: ThreadTurnInitiator;
+  historyInput: PromptInput[];
   input: PromptInput[];
   inputGroups?: PromptInput[][];
+  originPluginId: string | null;
+  progressSenders?: string[];
   queueInTransaction: SendThreadMessageQueueRequest;
   requestId: ClientTurnRequestId;
   senderThreadId: string | null;
+  systemNotice: QueuedMessageSystemNotice | undefined;
   target: TurnRequestTarget;
   thread: Thread;
 }
@@ -380,11 +434,12 @@ type UserMessageSentProperties = Extract<
 >["properties"];
 
 export function captureUserMessageSentTelemetry(
-  deps: Pick<LoggedPendingInteractionWorkSessionDeps, "telemetry">,
+  deps: Pick<LoggedPendingInteractionWorkSessionDeps, "config" | "telemetry">,
   args: {
     isChildThread: boolean;
     messageSource: UserMessageSentProperties["message_source"];
     providerId: string;
+    initiator: TelemetryInitiator;
   },
 ): void {
   deps.telemetry.capture({
@@ -393,6 +448,7 @@ export function captureUserMessageSentTelemetry(
       is_child_thread: args.isChildThread,
       message_source: args.messageSource,
       provider: args.providerId,
+      ...initiatorTelemetryProperty(deps.config.featureFlags, args.initiator),
     },
   });
 }
@@ -404,11 +460,15 @@ function appendAndQueueSendThreadMessageInTransaction({
   environmentId,
   execution,
   initiator,
+  historyInput,
   input,
   inputGroups,
+  originPluginId,
+  progressSenders,
   queueInTransaction,
   requestId,
   senderThreadId,
+  systemNotice,
   target,
   thread,
 }: AppendAndQueueSendThreadMessageArgs): AppendAndQueueSendThreadMessageResult {
@@ -427,9 +487,17 @@ function appendAndQueueSendThreadMessageInTransaction({
             ...(retryOf !== undefined ? { retryOf } : {}),
             input,
             ...(inputGroups !== undefined ? { inputGroups } : {}),
+            ...(progressSenders !== undefined ? { progressSenders } : {}),
             execution,
             initiator,
+            originPluginId,
             senderThreadId,
+            ...(systemNotice !== undefined
+              ? {
+                  systemMessageKind: systemNotice.kind,
+                  systemMessageSubject: systemNotice.subject,
+                }
+              : {}),
             requestMethod: "turn/start",
             source: "tell",
             target,
@@ -440,7 +508,7 @@ function appendAndQueueSendThreadMessageInTransaction({
         { db: tx },
         {
           thread,
-          input,
+          input: historyInput,
           initiator,
           target,
           requestSequence: appended.sequence,
@@ -467,6 +535,9 @@ export async function sendThreadMessage(
 ): Promise<void> {
   if (isStandaloneBuiltinClearCommand(args.payload.input)) {
     await clearThreadContext(deps, {
+      ...(args.beforeAppendInTransaction !== undefined
+        ? { beforeCommitInTransaction: args.beforeAppendInTransaction }
+        : {}),
       environment: args.environment,
       thread: args.thread,
     });
@@ -518,13 +589,18 @@ async function sendThreadMessageWithoutContextClear(
     input,
     ...(inputGroups !== undefined ? { inputGroups } : {}),
   }));
-  const deferredFirstTurnContext = resolveDeferredFirstTurnContext(
-    deps.db,
-    thread.id,
-  );
+  const deferredFirstTurnContext =
+    args.retryOf === undefined
+      ? resolveDeferredFirstTurnContext(deps.db, thread.id)
+      : null;
   ({ input, inputGroups } = prependDeferredFirstTurnContext(
     { input, ...(inputGroups !== undefined ? { inputGroups } : {}) },
     deferredFirstTurnContext,
+  ));
+  let progressSenders: string[] | undefined;
+  ({ input, inputGroups, progressSenders } = prependHeldProgress(
+    { input, ...(inputGroups !== undefined ? { inputGroups } : {}) },
+    args.leadingProgress ?? [],
   ));
   const beforeAppendInTransaction: SendThreadMessageTransactionPreflight = ({
     tx,
@@ -551,6 +627,11 @@ async function sendThreadMessageWithoutContextClear(
   inputGroups = inputGroups?.map((group) =>
     group.map((item) => resolvedByInput.get(item) ?? item),
   );
+  const historyInput = ownInputOf({
+    input,
+    ...(inputGroups !== undefined ? { inputGroups } : {}),
+    ...(progressSenders !== undefined ? { progressSenders } : {}),
+  });
   // Agent-originated CLI sends still appear as normal turn requests in the
   // timeline, while initiator lets policy distinguish the source. A retry is
   // `system` whatever the original was: nobody asked for it a second time, and
@@ -558,11 +639,17 @@ async function sendThreadMessageWithoutContextClear(
   // however many times the provider happened to be rate limited.
   const { initiator } = resolveDispatchAuthor({
     retrying: args.retryOf !== undefined,
+    systemNotice: args.systemNotice !== undefined,
     senderThreadId,
     startedOnBehalfOf: null,
   });
   const shouldCaptureUserMessageSent =
     args.trigger === "user" && initiator === "user" && input.length > 0;
+  const telemetryInitiator = resolveTelemetryInitiator({
+    origin: args.payload.originPluginId === undefined ? null : "plugin",
+    originPluginId: args.payload.originPluginId ?? null,
+    initiator,
+  });
   const expectedSteerTurnId =
     mode === "auto" || mode === "steer"
       ? getActiveTurnId(deps, thread.id)
@@ -570,7 +657,7 @@ async function sendThreadMessageWithoutContextClear(
   // A retry's model is provenance — the failed attempt's tuple, replayed —
   // not a fresh model choice, so it must not rewrite the thread's sticky
   // override the way an explicit user send's model does.
-  if (senderThreadId === null && args.retryOf === undefined) {
+  if (initiator === "user") {
     await recoverThreadModelOverride(deps, {
       model: payload.model,
       modelSource:
@@ -593,9 +680,15 @@ async function sendThreadMessageWithoutContextClear(
   // other callers bypass the checkpoint deliberately: a manual compaction turn
   // and an edited message's re-send are operations on the thread's existing
   // conversation, not new work a limiter admits.
-  const permissionEscalation = resolvePermissionEscalation({
+  const permissionEscalationArgs = {
     initiator,
-  });
+    senderThreadId,
+    threadId: thread.id,
+  };
+  const permissionEscalation = resolvePermissionEscalation(
+    deps.db,
+    permissionEscalationArgs,
+  );
 
   if (
     await dispatchTurnDuringReprovision({
@@ -606,7 +699,16 @@ async function sendThreadMessageWithoutContextClear(
       initiator,
       input,
       inputGroups,
+      originPluginId: args.originPluginId,
+      ...(progressSenders !== undefined ? { progressSenders } : {}),
+      ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       senderThreadId,
+      ...(args.systemNotice !== undefined
+        ? {
+            systemMessageKind: args.systemNotice.kind,
+            systemMessageSubject: args.systemNotice.subject,
+          }
+        : {}),
       thread,
     })
   ) {
@@ -615,6 +717,7 @@ async function sendThreadMessageWithoutContextClear(
         isChildThread: thread.parentThreadId !== null,
         messageSource: "thread_send",
         providerId: thread.providerId,
+        initiator: telemetryInitiator,
       });
     }
     return;
@@ -643,7 +746,6 @@ async function sendThreadMessageWithoutContextClear(
   if (mode === "start") {
     const commandArgs = {
       thread,
-      fork: null,
       input,
       ...(inputGroups !== undefined ? { inputGroups } : {}),
       requestId,
@@ -675,6 +777,8 @@ async function sendThreadMessageWithoutContextClear(
         }
       : await prepareReadyThreadTurnCommand(deps, commandArgs);
     const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+      historyInput,
+      ...(progressSenders !== undefined ? { progressSenders } : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       beforeAppendInTransaction: ({ tx }) => {
         beforeAppendInTransaction({ tx });
@@ -686,6 +790,7 @@ async function sendThreadMessageWithoutContextClear(
       initiator,
       input,
       inputGroups,
+      originPluginId: args.originPluginId,
       queueInTransaction: ({ tx }) => {
         const dispatchKind = command.mode;
         const currentThread = getThread(tx, thread.id);
@@ -707,6 +812,7 @@ async function sendThreadMessageWithoutContextClear(
       },
       requestId,
       senderThreadId,
+      systemNotice: args.systemNotice,
       target,
       thread,
     });
@@ -717,6 +823,12 @@ async function sendThreadMessageWithoutContextClear(
     );
     startLiveHostCommand(deps, {
       command: command.command,
+      finalizeCommand: (outgoing) =>
+        withCurrentPermissionEscalation(
+          deps.db,
+          outgoing,
+          permissionEscalationArgs,
+        ),
       hostId: readyEnvironment.hostId,
       timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
       ...(args.historyReplacement?.onCommandSettled !== undefined
@@ -741,6 +853,7 @@ async function sendThreadMessageWithoutContextClear(
         isChildThread: thread.parentThreadId !== null,
         messageSource: "thread_send",
         providerId: thread.providerId,
+        initiator: telemetryInitiator,
       });
     }
     return;
@@ -771,6 +884,8 @@ async function sendThreadMessageWithoutContextClear(
     requestId,
   });
   const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+    historyInput,
+    ...(progressSenders !== undefined ? { progressSenders } : {}),
     ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
     beforeAppendInTransaction,
     db: deps.db,
@@ -779,11 +894,13 @@ async function sendThreadMessageWithoutContextClear(
     initiator,
     input,
     inputGroups,
+    originPluginId: args.originPluginId,
     queueInTransaction: () => {
       return { activeThread: null };
     },
     requestId,
     senderThreadId,
+    systemNotice: args.systemNotice,
     target,
     thread,
   });
@@ -794,6 +911,12 @@ async function sendThreadMessageWithoutContextClear(
   );
   startLiveHostCommand(deps, {
     command,
+    finalizeCommand: (outgoing) =>
+      withCurrentPermissionEscalation(
+        deps.db,
+        outgoing,
+        permissionEscalationArgs,
+      ),
     hostId: readyEnvironment.hostId,
     timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
     onError: ({ error }) => {
@@ -808,6 +931,7 @@ async function sendThreadMessageWithoutContextClear(
       isChildThread: thread.parentThreadId !== null,
       messageSource: "thread_send",
       providerId: thread.providerId,
+      initiator: telemetryInitiator,
     });
   }
 }

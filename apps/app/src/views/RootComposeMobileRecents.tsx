@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { useAtom } from "jotai";
 import type { ProviderInfo, ThreadListEntry } from "@bb/domain";
 import { RouteAnchor } from "@/components/ui/app-route-anchor";
@@ -14,16 +20,12 @@ import {
   COARSE_POINTER_TEXT_SM_CLASS,
 } from "@bb/shared-ui/coarse-pointer-sizing";
 import { Icon } from "@bb/shared-ui/icon";
-import { OverflowFade } from "@/components/ui/overflow-fade";
+import { OverflowFade } from "@bb/shared-ui/overflow-fade";
 import { getThreadRoutePath, isProjectlessProjectId } from "@/lib/route-paths";
 import {
-  getThreadListIndicatorLabel,
-  resolveThreadListIndicator,
-  threadListIndicatorStateForThread,
   buildChronologicalThreadList,
-  type CollapsedChildActivity,
+  getProjectThreadItemDescendants,
   type ProjectThreadItem,
-  type ThreadListIndicatorState,
 } from "@bb/client-core";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import {
@@ -44,6 +46,7 @@ import { getProviderIconInfo } from "@/lib/provider-icon";
 import { ProviderIconMark } from "@/components/settings/ProviderIconMark";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { usePromptDraftInputThreadIds } from "@/hooks/usePromptDraftStorage";
+import { useThreadListEntryStatus } from "@/hooks/useThreadListEntryStatus";
 import { mobileRecentsCollapsedThreadIdsAtom } from "./mobile-recents-collapse";
 
 export const MOBILE_RECENT_ROW_HEIGHT_PX = 60;
@@ -139,11 +142,13 @@ const compareMobileRecentThreads: ThreadListEntryComparator = (left, right) => {
 export interface MobileRecentThreadRow {
   thread: ThreadListEntry;
   depth: number;
-  childActivity: CollapsedChildActivity;
-  hasUnsubmittedDraft: boolean;
+  hiddenThreads: readonly ThreadListEntry[];
+  hiddenThreadsHaveDraft: boolean;
   hasChildren: boolean;
   isCollapsed: boolean;
 }
+
+const NO_HIDDEN_THREADS: readonly ThreadListEntry[] = [];
 
 function flattenMobileRecentNodes({
   collapsedThreadIds,
@@ -159,11 +164,16 @@ function flattenMobileRecentNodes({
   for (const { node } of items) {
     const hasChildren = node.children.length > 0;
     const isCollapsed = hasChildren && collapsedThreadIds.has(node.thread.id);
+    const hiddenThreads = isCollapsed
+      ? getProjectThreadItemDescendants(node.children)
+      : NO_HIDDEN_THREADS;
     rows.push({
       thread: node.thread,
       depth: node.depth,
-      childActivity: node.stats.childActivity,
-      hasUnsubmittedDraft: draftThreadIds.has(node.thread.id),
+      hiddenThreads,
+      hiddenThreadsHaveDraft: hiddenThreads.some((thread) =>
+        draftThreadIds.has(thread.id),
+      ),
       hasChildren,
       isCollapsed,
     });
@@ -206,6 +216,10 @@ export function getMobileRecentAncestorIds({
   return ancestorIds;
 }
 
+function getFirstPaintMobileRecentRowCount(): number {
+  return Math.ceil(window.innerHeight / MOBILE_RECENT_ROW_HEIGHT_PX) + 1;
+}
+
 export function getMobileRecentThreads({
   collapsedThreadIds,
   draftThreadIds,
@@ -215,11 +229,7 @@ export function getMobileRecentThreads({
   flattenMobileRecentNodes({
     collapsedThreadIds,
     draftThreadIds,
-    items: buildChronologicalThreadList(
-      threads,
-      compareMobileRecentThreads,
-      draftThreadIds,
-    ),
+    items: buildChronologicalThreadList(threads, compareMobileRecentThreads),
     rows,
   });
   return rows;
@@ -235,47 +245,22 @@ function MobileRecentThreadRow({
   const {
     thread,
     depth,
-    childActivity,
-    hasUnsubmittedDraft,
+    hiddenThreads,
+    hiddenThreadsHaveDraft,
     hasChildren,
     isCollapsed,
   } = row;
   const touchStartedBeforeLink = useRef(false);
   const { providers: environmentProviders } = useSystemEnvironmentProviders();
   const threadTitle = useThreadTitleDisplayText(getThreadDisplayTitle(thread));
-  const indicatorState: ThreadListIndicatorState =
-    threadListIndicatorStateForThread(thread, hasUnsubmittedDraft);
-  const hasHiddenChildren = hasChildren && isCollapsed;
-  const trailingIndicatorState: ThreadListIndicatorState = hasHiddenChildren
-    ? {
-        hasPendingInteraction:
-          indicatorState.hasPendingInteraction || childActivity.pending,
-        hasUnsubmittedDraft:
-          indicatorState.hasUnsubmittedDraft ||
-          childActivity.hasUnsubmittedDraft,
-        hasUnreadError:
-          indicatorState.hasUnreadError || childActivity.unreadError,
-        hasUnreadSuccess:
-          indicatorState.hasUnreadSuccess ||
-          (childActivity.unread && !childActivity.unreadError),
-        isBackgroundAgentActive:
-          indicatorState.isBackgroundAgentActive ||
-          childActivity.backgroundAgent,
-        isBackgroundCommandActive:
-          indicatorState.isBackgroundCommandActive ||
-          childActivity.backgroundCommand,
-        isGoalActive: indicatorState.isGoalActive || childActivity.goal,
-        queuedWork: indicatorState.queuedWork,
-        isPlanModeActive:
-          indicatorState.isPlanModeActive || childActivity.planMode,
-        isRuntimeActive:
-          indicatorState.isRuntimeActive || childActivity.runtimeWorking,
-        isWorkflowActive:
-          indicatorState.isWorkflowActive || childActivity.workflow,
-      }
-    : indicatorState;
-  const indicatorKind = resolveThreadListIndicator(trailingIndicatorState);
-  const indicatorLabel = getThreadListIndicatorLabel(indicatorKind);
+  const {
+    indicator,
+    rowStatus,
+    label: indicatorLabel,
+  } = useThreadListEntryStatus(thread, {
+    threads: hiddenThreads,
+    haveDraft: hiddenThreadsHaveDraft,
+  });
   const environmentProviderLookup = findEnvironmentDisplayProvider(
     environmentProviders,
     thread.environmentProviderId,
@@ -403,9 +388,9 @@ function MobileRecentThreadRow({
               <span className="min-w-0 truncate">{metadataText}</span>
             </span>
           </span>
-          {indicatorKind !== "none" ? (
+          {indicator !== "none" || rowStatus !== null ? (
             <span className="flex size-6 shrink-0 items-center justify-center">
-              <ThreadStatusGlyph indicator={indicatorKind} />
+              <ThreadStatusGlyph indicator={indicator} rowStatus={rowStatus} />
             </span>
           ) : null}
         </RouteAnchor>
@@ -460,6 +445,10 @@ export function RootComposeMobileRecents({
       }),
     [collapsedThreadIds, draftThreadIds, threads],
   );
+  const hasMountedAllRows = useDeferredValue(true, false);
+  const renderedThreads = hasMountedAllRows
+    ? recentThreads
+    : recentThreads.slice(0, getFirstPaintMobileRecentRowCount());
 
   if (!showCreatingRow && recentThreads.length === 0) {
     return null;
@@ -504,7 +493,7 @@ export function RootComposeMobileRecents({
       ) : null}
       {recentThreads.length > 0 ? (
         <ul className="space-y-px">
-          {recentThreads.map((row) => (
+          {renderedThreads.map((row) => (
             <MobileRecentThreadRow
               key={row.thread.id}
               highlighted={row.thread.id === highlightedThreadId}

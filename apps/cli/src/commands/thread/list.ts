@@ -8,7 +8,7 @@ import {
   printBorderlessTable,
   truncateCell,
 } from "../../table.js";
-import { outputJson } from "../helpers.js";
+import { collectOption, outputJson } from "../helpers.js";
 import {
   resolveMachineHostId,
   resolveMachineTargetOption,
@@ -20,7 +20,9 @@ interface ThreadListCommandOptions {
   host?: string;
   project?: string;
   parentThread?: string;
+  thread: string[];
   archived?: boolean;
+  includeArchived?: boolean;
   section?: string;
   unsectioned?: boolean;
   json?: boolean;
@@ -42,9 +44,16 @@ export function registerListCommand(
     )
     .option("--host <id-or-name>", "Alias for --machine")
     .option("--parent-thread <id>", "Filter by parent thread ID")
+    .option(
+      "--thread <id>",
+      "Show only this thread ID, leaving out unknown or deleted IDs (repeatable, up to 200)",
+      collectOption,
+      [],
+    )
     .option("--section <id>", "Filter by thread section ID")
     .option("--unsectioned", "Show only threads outside sections")
     .option("--archived", "Show only archived threads")
+    .option("--include-archived", "Include archived threads")
     .option("--include-hidden", "Include hidden threads")
     .option("--json", "Print machine-readable JSON output")
     .action(
@@ -58,6 +67,10 @@ export function registerListCommand(
           flagName: "--parent-thread",
           value: opts.parentThread,
         });
+        const threadIds = opts.thread.flatMap(
+          (value) =>
+            resolveExplicitIdFlag({ flagName: "--thread", value }) ?? [],
+        );
         const environmentId = resolveExplicitIdFlag({
           flagName: "--environment",
           value: opts.environment,
@@ -75,6 +88,9 @@ export function registerListCommand(
                   serverUrl: getUrl(),
                   target: machineTarget,
                 });
+        if (opts.archived && opts.includeArchived) {
+          throw new Error("Cannot combine --archived with --include-archived.");
+        }
         if (opts.section && opts.unsectioned) {
           throw new Error("Cannot combine --section with --unsectioned.");
         }
@@ -82,12 +98,18 @@ export function registerListCommand(
           flagName: "--section",
           value: opts.section,
         });
+        const archived = opts.archived
+          ? true
+          : opts.includeArchived || threadIds.length > 0
+            ? undefined
+            : false;
         const threads = await sdk.threads.list({
           ...(projectId ? { projectId } : {}),
           ...(environmentId ? { environmentId } : {}),
           ...(hostId ? { hostId } : {}),
           ...(parentThreadId ? { parentThreadId } : {}),
-          ...(opts.archived ? { archived: true } : {}),
+          ...(threadIds.length > 0 ? { threadIds } : {}),
+          ...(archived === undefined ? {} : { archived }),
           ...(sectionId ? { sectionId } : {}),
           ...(opts.unsectioned ? { unsectioned: true } : {}),
           ...(opts.includeHidden ? { includeHidden: true } : {}),

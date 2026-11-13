@@ -26,6 +26,7 @@ import {
 import { HEARTBEAT_INTERVAL_MS, LEASE_TIMEOUT_MS } from "../constants.js";
 import {
   notifyDaemonEnvironmentChange,
+  notifyDaemonThreadStorageChange,
   recordDaemonEnvironmentMetadataChange,
 } from "../internal/environment-changes.js";
 import { requestQueuedMessageDispatch } from "../services/threads/queued-message-dispatch.js";
@@ -109,6 +110,7 @@ export function onDaemonSocketOpen(
   deps.hub.registerDaemon(args.sessionId, args.hostId, args.socket);
   handleDaemonSocketOpened(deps, { hostId: args.hostId });
   deps.sharedPorts.pushCurrentSharedPortsForHost(args.hostId);
+  deps.sharedPorts.pushCurrentNextTunnelForHost(args.hostId);
   if (!isServerMoveSnapshotFenced(deps.db)) {
     deps.terminalSessions.reconcileDisconnectedHostTerminals({
       daemonSessionId: args.sessionId,
@@ -203,6 +205,13 @@ export function onDaemonSocketMessage(
         });
         return;
       }
+      if (message.type === "thread-storage-change") {
+        notifyDaemonThreadStorageChange(deps, {
+          hostId: args.hostId,
+          threadId: message.threadId,
+        });
+        return;
+      }
       if (message.type === "environment-metadata-change") {
         recordDaemonEnvironmentMetadataChange(deps, {
           hostId: args.hostId,
@@ -240,6 +249,14 @@ export function onDaemonSocketMessage(
       }
       if (message.type === "connect-tunnel.identity") {
         deps.sharedPorts.recordTunnelIdentity(args.hostId, message.identity);
+        return;
+      }
+      if (message.type === "connect-next.status") {
+        deps.sharedPorts.recordNextTunnelStatus({
+          hostId: args.hostId,
+          sessionId: args.sessionId,
+          status: message.status,
+        });
         return;
       }
       if (message.type === "desktop-browser.changed") {

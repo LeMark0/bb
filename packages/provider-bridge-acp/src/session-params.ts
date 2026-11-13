@@ -1,5 +1,6 @@
 import type {
   DynamicTool,
+  PermissionEscalation,
   PermissionMode,
   ReasoningLevel,
   ServiceTier,
@@ -22,6 +23,7 @@ export interface AcpSessionExecutionOptions {
   instructions?: string | undefined;
   envVars?: Record<string, string> | undefined;
   permissionMode: PermissionMode;
+  permissionEscalation: PermissionEscalation | null;
   skillRoots?: readonly AcpSkillRoot[] | undefined;
 }
 
@@ -41,6 +43,7 @@ export interface AcpAgentCommandParam {
 export interface AcpModelListParams {
   listCommand?: AcpAgentCommandParam;
   agent?: AcpAgentCommandParam;
+  optionsAgent?: AcpAgentCommandParam;
   primaryModels: string[];
   reasoningProbePriorityModelIds: string[];
   parameterizedModelPicker: boolean;
@@ -74,6 +77,7 @@ export interface AcpSessionParams {
   parameterizedModelPicker: boolean;
   permissionCli?: AcpBridgePermissionCli;
   permissionMode: "accept-edits" | "full";
+  permissionEscalation: PermissionEscalation | null;
   workspaceWriteRoots: string[];
   envVars?: Record<string, string>;
   instructions?: string;
@@ -151,18 +155,21 @@ function buildAcpModelListCommand(
   };
 }
 
-function buildAcpModelDiscoveryAgentCommand(
-  launchSpec: AcpLaunchSpec,
-): AcpAgentCommandParam | undefined {
-  if (buildAcpModelListCommand(launchSpec) !== undefined) {
-    return undefined;
-  }
+function buildAcpAgentCommand(launchSpec: AcpLaunchSpec): AcpAgentCommandParam {
   return {
     command: launchSpec.command,
     args: [...launchSpec.args],
     ...(launchSpec.cwd !== undefined ? { cwd: launchSpec.cwd } : {}),
     ...launchEnvVars(launchSpec),
   };
+}
+
+function buildAcpModelDiscoveryAgentCommand(
+  launchSpec: AcpLaunchSpec,
+): AcpAgentCommandParam | undefined {
+  return buildAcpModelListCommand(launchSpec) !== undefined
+    ? undefined
+    : buildAcpAgentCommand(launchSpec);
 }
 
 interface AcpModelListOptions {
@@ -193,6 +200,7 @@ export function buildAcpModelListParams(
   return {
     ...(listCommand !== undefined ? { listCommand } : {}),
     ...(agent !== undefined ? { agent } : {}),
+    optionsAgent: buildAcpAgentCommand(launchSpec),
     primaryModels,
     reasoningProbePriorityModelIds,
     parameterizedModelPicker: options.parameterizedModelPicker,
@@ -329,6 +337,7 @@ export function buildAcpSessionParams(
       ? { permissionCli: launchSpec.permissionCli }
       : {}),
     permissionMode: options.permissionMode,
+    permissionEscalation: options.permissionEscalation,
     workspaceWriteRoots: [cwd, ...args.additionalWorkspaceWriteRoots],
     ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
     ...(instructions ? { instructions } : {}),

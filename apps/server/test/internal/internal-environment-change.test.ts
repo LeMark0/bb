@@ -6,7 +6,9 @@ import {
   seedEnvironment,
   seedHostSession,
   seedProjectWithSource,
+  seedThread,
 } from "../helpers/seed.js";
+import { readJson } from "../helpers/json.js";
 import { withTestHarness } from "../helpers/test-app.js";
 
 interface TestDaemonSocket {
@@ -71,6 +73,7 @@ describe("internal environment change websocket hints", () => {
           requestId: "rpc-protocol-session-scoped",
           command: {
             type: "host.list_files",
+            followRootSymlink: false,
             path: "/tmp/session-scope-test",
             limit: 10,
             includeHidden: false,
@@ -127,10 +130,56 @@ describe("internal environment change websocket hints", () => {
     });
   });
 
+  it("notifies only the changed thread when its storage changes, and only from its own host", async () => {
+    await withTestHarness(async (harness) => {
+      const { host, session } = seedHostSession(harness.deps, {
+        id: "host-storage-owner",
+      });
+      const other = seedHostSession(harness.deps, {
+        id: "host-storage-other",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: "/tmp/env-storage-change",
+        status: "ready",
+      });
+      const thread = seedThread(harness.deps, {
+        projectId: project.id,
+        environmentId: environment.id,
+      });
+      const notifyThreadSpy = vi.spyOn(harness.hub, "notifyThread");
+      const notifyEnvironmentSpy = vi.spyOn(harness.hub, "notifyEnvironment");
+      const send = (hostId: string, sessionId: string) =>
+        onDaemonSocketMessage(harness.deps, {
+          hostId,
+          sessionId,
+          socket: createTestDaemonSocket(),
+          raw: JSON.stringify({
+            type: "thread-storage-change",
+            threadId: thread.id,
+          }),
+        });
+
+      send(other.host.id, other.session.id);
+      expect(notifyThreadSpy).not.toHaveBeenCalled();
+
+      send(host.id, session.id);
+      expect(notifyThreadSpy).toHaveBeenCalledTimes(1);
+      expect(notifyThreadSpy).toHaveBeenCalledWith(thread.id, [
+        "storage-changed",
+      ]);
+      expect(notifyEnvironmentSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     "work-status-changed",
-    "thread-storage-changed",
     "git-refs-changed",
+    "git-branches-changed",
   ] as const)(
     "notifies clients for %s hints without mutating rows",
     async (change) => {
@@ -171,7 +220,7 @@ describe("internal environment change websocket hints", () => {
     },
   );
 
-  it("records workspace metadata when a watched workspace becomes a repository", async () => {
+  it("updates sidebar branch labels from daemon metadata without workspace status reads", async () => {
     await withTestHarness(async (harness) => {
       const { host, session } = seedHostSession(harness.deps, {
         id: "host-env-metadata-change",
@@ -185,6 +234,10 @@ describe("internal environment change websocket hints", () => {
         path: "/tmp/env-metadata-change",
         status: "ready",
         isGitRepo: false,
+      });
+      const thread = seedThread(harness.deps, {
+        projectId: project.id,
+        environmentId: environment.id,
       });
       const notifyEnvironmentSpy = vi.spyOn(harness.hub, "notifyEnvironment");
       const socket = createTestDaemonSocket();
@@ -216,6 +269,41 @@ describe("internal environment change websocket hints", () => {
       expect(notifyEnvironmentSpy).toHaveBeenCalledWith(environment.id, [
         "metadata-changed",
       ]);
+
+      for (const branchName of ["feature/checkout", null]) {
+        onDaemonSocketMessage(harness.deps, {
+          hostId: host.id,
+          sessionId: session.id,
+          socket,
+          raw: JSON.stringify({
+            type: "environment-metadata-change",
+            environmentId: environment.id,
+            workspace: {
+              path: environment.path,
+              isGitRepo: true,
+              isWorktree: true,
+              branchName,
+              defaultBranch: "main",
+            },
+          }),
+        });
+        expect(getEnvironment(harness.db, environment.id)).toMatchObject({
+          branchName,
+          defaultBranch: "main",
+        });
+        const response = await harness.app.request(
+          `/api/v1/threads?projectId=${project.id}`,
+        );
+        expect(response.status).toBe(200);
+        expect(await readJson(response)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: thread.id,
+              environmentBranchName: branchName,
+            }),
+          ]),
+        );
+      }
     });
   });
 

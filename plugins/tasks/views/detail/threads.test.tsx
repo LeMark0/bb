@@ -5,6 +5,7 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { makeTask, rpcInput } from "../../test-fixtures.js";
+import { threadsChangedTags } from "../../shared/tags";
 
 if (!window.matchMedia) {
   window.matchMedia = (query: string) => ({
@@ -151,7 +152,7 @@ describe("task detail pull request pills", () => {
     expect(slot.queryByRole("link")).toBeNull();
   });
 
-  it("detaches a thread from its card after confirmation and refetches the list", async () => {
+  it("detaches a thread from its card after confirmation and refreshes when the server invalidates", async () => {
     let detached = false;
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -180,6 +181,7 @@ describe("task detail pull request pills", () => {
         input: { taskId: TASK_ID, threadId: "thr_worker000" },
       });
     });
+    await slot.behavior.experimental_invalidateRpc(threadsChangedTags(TASK_ID));
     await waitFor(() => expect(slot.queryByText("Worker")).toBeNull());
   });
 
@@ -238,6 +240,7 @@ function sidebarThread(
     title: overrides.displayTitle,
     titleFallback: null,
     parentThreadId: null,
+    parentNotifications: "auto",
     lifecycleOwnerThreadId: null,
     sourceThreadId: null,
     sectionId: null,
@@ -253,7 +256,6 @@ function sidebarThread(
       backgroundAgents: 0,
       backgroundCommands: 0,
       planMode: 0,
-      goals: 0,
     },
     indicator: "none",
     indicatorLabel: null,
@@ -529,24 +531,22 @@ describe("task thread shortcut row", () => {
   it("re-resolves a completed archived main when Refresh follows its deletion", async () => {
     let deleted = false;
     let lookups = 0;
-    const slot = renderDetail(
-      () => [{ ...managerRow(true), liveStatus: "completed" }],
-      {
-        sdk: {
-          threads: {
-            get: async () => {
-              lookups += 1;
-              if (deleted) throw new Error("thread_not_found");
-              return makeThreadResponse({
-                id: "thr_manager0",
-                title: "Archived manager",
-                archivedAt: Date.now(),
-              });
-            },
+    const rows = () => [{ ...managerRow(true), liveStatus: "completed" }];
+    const slot = renderDetail(rows, {
+      sdk: {
+        threads: {
+          get: async () => {
+            lookups += 1;
+            if (deleted) throw new Error("thread_not_found");
+            return makeThreadResponse({
+              id: "thr_manager0",
+              title: "Archived manager",
+              archivedAt: Date.now(),
+            });
           },
         },
       },
-    );
+    });
     await slot.findByRole("button", {
       name: /^Open main thread: Archived manager/,
     });
@@ -563,7 +563,8 @@ describe("task thread shortcut row", () => {
 
   it("recovers a main whose lookup failed once a threads signal arrives", async () => {
     let failing = true;
-    const slot = renderDetail(() => [managerRow(true)], {
+    const rows = () => [managerRow(true)];
+    const slot = renderDetail(rows, {
       sdk: {
         threads: {
           get: async () => {
@@ -580,7 +581,7 @@ describe("task thread shortcut row", () => {
     expect(await slot.findByText("Main thread unavailable")).toBeTruthy();
 
     failing = false;
-    await slot.emitRealtime("threads:changed", { taskId: TASK_ID });
+    await slot.behavior.experimental_invalidateRpc(threadsChangedTags(TASK_ID));
 
     expect(
       await slot.findByRole("button", {
@@ -730,7 +731,7 @@ describe("task thread shortcut row", () => {
     await slot.findByRole("link", { name: /^Open thread: Live worker/ });
 
     mainIsManager = false;
-    await slot.emitRealtime("threads:changed", { taskId: TASK_ID });
+    await slot.behavior.experimental_invalidateRpc(threadsChangedTags(TASK_ID));
     await slot.findByRole("link", {
       name: "Open main thread: Live worker, working",
     });
@@ -839,7 +840,7 @@ describe("task thread shortcut row", () => {
       }),
     );
     const before = listCalls();
-    await slot.emitRealtime("threads:changed", { taskId: TASK_ID });
+    await slot.behavior.experimental_invalidateRpc(threadsChangedTags(TASK_ID));
     await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
     await act(async () => acknowledge());
 
@@ -871,7 +872,7 @@ describe("task thread shortcut row", () => {
         input: { taskId: TASK_ID, threadId: "thr_worker000" },
       }),
     );
-    await slot.emitRealtime("threads:changed", { taskId: TASK_ID });
+    await slot.behavior.experimental_invalidateRpc(threadsChangedTags(TASK_ID));
     await waitFor(() =>
       expect(
         slot.rpcCalls.filter((call) => call.method === "listTaskThreads")

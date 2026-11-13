@@ -1,7 +1,13 @@
 import {
-  detectGitRepo,
+  getWorkspaceGitOperation,
+  hasUncommittedChanges,
+  pathExists,
+  readCheckoutRef,
+  readGitRepo,
+  readRefs,
   runGit,
   WorkspaceError,
+  type GitRepo,
 } from "bb-environment-provider-host/git";
 import { tryWithCheckoutMutationLock } from "bb-environment-provider-host/locks";
 import {
@@ -9,13 +15,6 @@ import {
   throwIfProvisionAborted,
   type ProgressCallback,
 } from "bb-environment-provider-host/transcript";
-import {
-  getCheckoutRef,
-  getWorkspaceGitOperation,
-  hasUncommittedChanges,
-  listLocalBranches,
-  pathExists,
-} from "./git.js";
 import type { CheckoutBranch, CheckoutInspection } from "../contract.js";
 
 interface AttachCheckoutArgs {
@@ -28,6 +27,7 @@ interface AttachCheckoutArgs {
 export interface AttachedCheckout {
   path: string;
   branchName: string | null;
+  mergeBaseBranch: string | null;
 }
 
 function checkoutLabel(
@@ -53,11 +53,36 @@ function checkoutLabel(
   return `${verb} branch ${branch.name}`;
 }
 
+type BranchLocation = "local" | "origin" | "missing";
+
+interface SwitchPlan {
+  switchArgs: string[];
+  startPoint: string | null;
+  location: BranchLocation;
+}
+
+async function locateBranch(
+  repo: GitRepo,
+  name: string,
+): Promise<BranchLocation> {
+  const localRef = `refs/heads/${name}`;
+  const originRef = `refs/remotes/origin/${name}`;
+  const refs = await readRefs(repo.path, [localRef, originRef]);
+  if (refs.has(localRef)) {
+    return "local";
+  }
+  if (refs.has(originRef)) {
+    return "origin";
+  }
+  return "missing";
+}
+
 async function assertSwitchable(
-  cwd: string,
+  repo: GitRepo,
   branch: CheckoutBranch,
+  plan: SwitchPlan,
 ): Promise<"already-current" | "ready"> {
-  const ref = await getCheckoutRef(cwd);
+  const ref = await readCheckoutRef(repo);
   if (
     (ref.kind === "branch" || ref.kind === "unborn") &&
     ref.branchName === branch.name
@@ -83,16 +108,13 @@ async function assertSwitchable(
         `Cannot inspect current checkout: ${ref.reason}`,
       );
   }
-  if (branch.kind === "existing") {
-    const branches = await listLocalBranches(cwd);
-    if (!branches.includes(branch.name)) {
-      throw new WorkspaceError(
-        "checkout_missing_branch",
-        `Cannot checkout missing branch ${branch.name}`,
-      );
-    }
+  if (branch.kind === "existing" && plan.location === "missing") {
+    throw new WorkspaceError(
+      "checkout_missing_branch",
+      `Cannot checkout missing branch ${branch.name}`,
+    );
   }
-  const operation = await getWorkspaceGitOperation(cwd);
+  const operation = await getWorkspaceGitOperation(repo);
   if (operation.kind !== "none" && operation.hasConflicts) {
     throw new WorkspaceError(
       "checkout_conflicts",
@@ -105,7 +127,7 @@ async function assertSwitchable(
       `Cannot checkout branch while ${operation.kind} is in progress`,
     );
   }
-  if (await hasUncommittedChanges(cwd)) {
+  if (await hasUncommittedChanges(repo.path)) {
     throw new WorkspaceError(
       "checkout_dirty",
       "Cannot checkout branch while the workspace has uncommitted changes",
@@ -114,14 +136,35 @@ async function assertSwitchable(
   return "ready";
 }
 
+async function planSwitch(
+  repo: GitRepo,
+  branch: CheckoutBranch,
+): Promise<SwitchPlan> {
+  if (branch.kind === "existing") {
+    const location = await locateBranch(repo, branch.name);
+    return {
+      switchArgs:
+        location === "origin"
+          ? ["switch", "--track", `origin/${branch.name}`]
+          : ["switch", branch.name],
+      startPoint: null,
+      location,
+    };
+  }
+  const location = await locateBranch(repo, branch.baseBranch);
+  const startPoint =
+    location === "origin" ? `origin/${branch.baseBranch}` : branch.baseBranch;
+  return {
+    switchArgs: ["switch", "--no-track", "-C", branch.name, startPoint],
+    startPoint,
+    location,
+  };
+}
+
 async function switchBranch(
-  args: AttachCheckoutArgs & { branch: CheckoutBranch },
-): Promise<void> {
-  const { path: cwd, branch, onProgress, signal } = args;
-  const switchArgs =
-    branch.kind === "new"
-      ? ["switch", "-C", branch.name, branch.baseBranch]
-      : ["switch", branch.name];
+  args: AttachCheckoutArgs & { branch: CheckoutBranch; repo: GitRepo },
+): Promise<string | null> {
+  const { path: cwd, branch, repo, onProgress, signal } = args;
   const waitingStartedAt = Date.now();
   emitStep({
     onProgress,
@@ -133,6 +176,7 @@ async function switchBranch(
   let startedAt = waitingStartedAt;
   let waitingCompleted = false;
   let alreadyOnTarget = false;
+  let startPoint: string | null = null;
   try {
     const locked = await tryWithCheckoutMutationLock(
       cwd,
@@ -149,7 +193,11 @@ async function switchBranch(
         });
         waitingCompleted = true;
         startedAt = lockAcquiredAt;
-        if ((await assertSwitchable(cwd, branch)) === "already-current") {
+        const plan = await planSwitch(repo, branch);
+        startPoint = plan.startPoint;
+        if (
+          (await assertSwitchable(repo, branch, plan)) === "already-current"
+        ) {
           alreadyOnTarget = true;
           return;
         }
@@ -160,7 +208,7 @@ async function switchBranch(
           status: "started",
           startedAt,
         });
-        await runGit(switchArgs, {
+        await runGit(plan.switchArgs, {
           cwd,
           ...(signal !== undefined ? { signal } : {}),
         });
@@ -206,6 +254,12 @@ async function switchBranch(
     });
     throw error;
   }
+  return startPoint;
+}
+
+async function readWorkTree(cwd: string): Promise<GitRepo | null> {
+  const repo = await readGitRepo(cwd);
+  return repo?.kind === "work-tree" ? repo : null;
 }
 
 export async function inspectCheckout(args: {
@@ -214,13 +268,14 @@ export async function inspectCheckout(args: {
   if (!(await pathExists(args.path))) {
     return { isGitRepo: false };
   }
-  if (!(await detectGitRepo(args.path))) {
+  const repo = await readWorkTree(args.path);
+  if (repo === null) {
     return { isGitRepo: false };
   }
   const [checkout, dirty, operation] = await Promise.all([
-    getCheckoutRef(args.path),
-    hasUncommittedChanges(args.path),
-    getWorkspaceGitOperation(args.path),
+    readCheckoutRef(repo),
+    hasUncommittedChanges(repo.path),
+    getWorkspaceGitOperation(repo),
   ]);
   return {
     isGitRepo: true,
@@ -240,23 +295,29 @@ export async function attachCheckout(
       `Workspace path does not exist: ${args.path}`,
     );
   }
-  const isGitRepo = await detectGitRepo(args.path);
+  const repo = await readWorkTree(args.path);
+  let mergeBaseBranch: string | null = null;
   if (args.branch !== null) {
-    if (!isGitRepo) {
+    if (repo === null) {
       throw new WorkspaceError(
         "not_git_repo",
         `Cannot checkout branch on non-git workspace: ${args.path}`,
       );
     }
-    await switchBranch({ ...args, branch: args.branch });
+    mergeBaseBranch = await switchBranch({
+      ...args,
+      branch: args.branch,
+      repo,
+    });
   }
-  if (!isGitRepo) {
-    return { path: args.path, branchName: null };
+  if (repo === null) {
+    return { path: args.path, branchName: null, mergeBaseBranch: null };
   }
-  const ref = await getCheckoutRef(args.path);
+  const ref = await readCheckoutRef(repo);
   return {
     path: args.path,
     branchName:
       ref.kind === "branch" || ref.kind === "unborn" ? ref.branchName : null,
+    mergeBaseBranch,
   };
 }

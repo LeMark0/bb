@@ -7,6 +7,7 @@ import { cancelProviderEnvironmentCreation } from "../environments/environment-e
 import { getPreparingEnvironment } from "@bb/db";
 import { getThread, type DbTransaction, type EnvironmentRow } from "@bb/db";
 import {
+  flattenPromptInputGroups,
   type EnvironmentProviderSelection,
   type PromptInput,
   type ResolvedThreadExecutionOptions,
@@ -25,13 +26,13 @@ import {
   appendThreadProvisioningEventInTransaction,
   buildCwdBranchEntries,
   createClientTurnRequestId,
+  type TurnRequestRetryMarker,
 } from "./thread-events.js";
 import {
   hasLiveThreadStartInFlight,
   requestThreadStart,
 } from "./thread-lifecycle.js";
-import { resolveDispatchAuthor } from "./dispatch-author.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
+import type { DispatchAuthor } from "./dispatch-author.js";
 import {
   createThreadStartup,
   type ThreadForkDescriptor,
@@ -56,11 +57,16 @@ import { runtimeErrorLogFields } from "../lib/error-log-fields.js";
 import { recordAcceptedPromptHistoryEntry } from "../prompt-history.js";
 
 interface RequestThreadProvisionArgs {
+  author: DispatchAuthor;
   environmentIntent: ThreadProvisionEnvironmentIntent;
   execution: ResolvedThreadExecutionOptions;
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  inputGroups?: PromptInput[][];
+  originPluginId: string | null;
+  progressSenders?: string[];
   providerInput?: PromptInput[];
+  retryOf?: TurnRequestRetryMarker;
   startedOnBehalfOf: StartedOnBehalfOf | null;
   thread: Thread;
   titleProvided: boolean;
@@ -73,6 +79,9 @@ interface RequestThreadTargetReprovisionArgs {
   input: PromptInput[];
   inputGroups?: PromptInput[][];
   initiator: ThreadTurnInitiator;
+  originPluginId: string | null;
+  progressSenders?: string[];
+  retryOf?: TurnRequestRetryMarker;
   senderThreadId: string | null;
   systemMessageKind?: SystemMessageKind;
   systemMessageSubject?: SystemMessageSubject | null;
@@ -278,9 +287,11 @@ async function startThreadIfEnvironmentReady(
       : {}),
     requestId: args.context.request.clientRequestId,
     execution,
-    permissionEscalation: resolvePermissionEscalation({
-      initiator: "user",
-    }),
+    permissionEscalationArgs: {
+      initiator: args.context.request.initiator,
+      senderThreadId: args.context.request.senderThreadId,
+      threadId: args.thread.id,
+    },
     projectId: args.thread.projectId,
     providerId: args.thread.providerId,
     syncGeneratedTitle: !args.context.request.titleProvided,
@@ -292,19 +303,23 @@ export function requestThreadProvision(
   args: RequestThreadProvisionArgs,
 ): ThreadProvisionContext {
   return deps.db.transaction(() => {
-    const { initiator, senderThreadId } = resolveDispatchAuthor({
-      retrying: false,
-      senderThreadId: null,
-      startedOnBehalfOf: args.startedOnBehalfOf,
-    });
+    const { initiator, senderThreadId } = args.author;
     const target: TurnRequestTarget = { kind: "thread-start" };
     const request = appendClientTurnEvent(deps, {
       threadId: args.thread.id,
       environmentId: args.thread.environmentId,
       type: "client/turn/requested",
+      ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       input: args.input,
+      ...(args.inputGroups !== undefined
+        ? { inputGroups: args.inputGroups }
+        : {}),
+      ...(args.progressSenders !== undefined
+        ? { progressSenders: args.progressSenders }
+        : {}),
       execution: args.execution,
       initiator,
+      originPluginId: args.originPluginId,
       senderThreadId,
       requestMethod: "thread/start",
       source: "spawn",
@@ -312,7 +327,12 @@ export function requestThreadProvision(
     });
     recordAcceptedPromptHistoryEntry(deps, {
       thread: args.thread,
-      input: args.input,
+      input:
+        args.progressSenders !== undefined && args.inputGroups !== undefined
+          ? flattenPromptInputGroups(
+              args.inputGroups.slice(args.progressSenders.length),
+            )
+          : args.input,
       initiator,
       target,
       requestSequence: request.sequence,
@@ -327,10 +347,18 @@ export function requestThreadProvision(
     });
 
     const context = createThreadStartup({
-      ...args,
       clientRequestId: request.requestId,
+      environmentIntent: args.environmentIntent,
+      execution: args.execution,
+      fork: args.fork,
       input: args.providerInput ?? args.input,
+      ...(args.providerInput === undefined && args.inputGroups !== undefined
+        ? { inputGroups: args.inputGroups }
+        : {}),
+      initiator,
+      senderThreadId,
       seedWithoutRun: args.startedOnBehalfOf !== null,
+      titleProvided: args.titleProvided,
     });
     saveThreadProvisionContext({
       replace: true,
@@ -367,6 +395,8 @@ export function requestThreadEnvironmentRestore(
         execution: null,
         fork: null,
         input: [],
+        initiator: "user",
+        senderThreadId: null,
         seedWithoutRun: true,
         titleProvided: true,
       });
@@ -411,6 +441,8 @@ export function requestThreadTargetReprovision(
       ...(args.inputGroups !== undefined
         ? { inputGroups: args.inputGroups }
         : {}),
+      initiator: args.initiator,
+      senderThreadId: args.senderThreadId,
       seedWithoutRun: false,
       titleProvided: true,
     });
@@ -439,12 +471,17 @@ function appendReprovisionTurnRequest(
             threadId: args.thread.id,
             environmentId: args.environment.id,
             type: "client/turn/requested",
+            ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
             input: args.input,
             ...(args.inputGroups !== undefined
               ? { inputGroups: args.inputGroups }
               : {}),
+            ...(args.progressSenders !== undefined
+              ? { progressSenders: args.progressSenders }
+              : {}),
             execution: args.execution,
             initiator: args.initiator,
+            originPluginId: args.originPluginId,
             senderThreadId: args.senderThreadId,
             systemMessageKind: args.systemMessageKind,
             systemMessageSubject: args.systemMessageSubject,
@@ -458,7 +495,12 @@ function appendReprovisionTurnRequest(
         { db: tx },
         {
           thread: args.thread,
-          input: args.input,
+          input:
+            args.progressSenders !== undefined && args.inputGroups !== undefined
+              ? flattenPromptInputGroups(
+                  args.inputGroups.slice(args.progressSenders.length),
+                )
+              : args.input,
           initiator: args.initiator,
           target: { kind: "new-turn" },
           requestSequence: request.sequence,

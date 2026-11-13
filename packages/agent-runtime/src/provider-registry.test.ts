@@ -64,48 +64,51 @@ const PI_BRIDGE_LAUNCH: AgentRuntimeBridgeLaunch = {
   },
 };
 
-function expectBridgeSpawn(
+function expectSourceBridgeSpawn(
   provider: { process: { args: string[] } },
-  expected: { module: string | RegExp; bundleDir?: string },
+  moduleArg: string,
 ): void {
   const args = provider.process.args;
-  expect(args.slice(-2)).toEqual([
+  expect(args.slice(-3)).toEqual([
+    moduleArg,
     "provider-fixture",
     "/data/plugins/provider-fixture/bridge-data",
   ]);
-  const moduleArg = args.at(-3) ?? "";
-  if (typeof expected.module === "string") {
-    expect(moduleArg).toBe(expected.module);
-  } else {
-    expect(moduleArg).toMatch(expected.module);
-  }
   const workerArgs = args.slice(0, -3);
-  if (expected.bundleDir === undefined) {
-    expect(workerArgs.slice(0, 3)).toEqual([
-      "--conditions=source",
-      "--import",
-      import.meta.resolve("tsx"),
-    ]);
-    expect(workerArgs.at(-1)).toMatch(/bridge-worker-entry\.ts$/u);
-  } else {
-    expect(workerArgs).toEqual([
-      path.resolve(expected.bundleDir, "bb-provider-bridge-worker.mjs"),
-    ]);
-  }
+  expect(workerArgs.slice(0, 3)).toEqual([
+    "--conditions=source",
+    "--import",
+    import.meta.resolve("tsx"),
+  ]);
+  expect(workerArgs.at(-1)).toMatch(/bridge-worker-entry\.ts$/u);
 }
 
 describe("provider registry", () => {
-  it("runs the packaged bootstrap from the configured bridge bundle directory", () => {
-    const piProvider = createProviderForId("pi", {
-      additionalWorkspaceWriteRoots: [],
-      bridgeBundleDir: "/tmp",
-      bridgeLaunch: PI_BRIDGE_LAUNCH,
-    });
-
-    expectBridgeSpawn(piProvider, {
-      module: "/data/provider-bridges/pi.mjs",
-      bundleDir: "/tmp",
-    });
+  it("starts bridge workers with only the daemon's Node network flags", () => {
+    const execArgv = process.execArgv;
+    process.execArgv = [
+      ...execArgv,
+      "--use-system-ca",
+      "--inspect",
+      "--use-env-proxy",
+    ];
+    try {
+      const provider = createProviderForId("pi", {
+        additionalWorkspaceWriteRoots: [],
+        bridgeBundleDir: "/tmp",
+        bridgeLaunch: PI_BRIDGE_LAUNCH,
+      });
+      expect(provider.process.args).toEqual([
+        "--use-system-ca",
+        "--use-env-proxy",
+        path.resolve("/tmp", "bb-provider-bridge-worker.mjs"),
+        "/data/provider-bridges/pi.mjs",
+        "provider-fixture",
+        "/data/plugins/provider-fixture/bridge-data",
+      ]);
+    } finally {
+      process.execArgv = execArgv;
+    }
   });
 
   it("runs the bridge under the configured bridge node runtime", () => {
@@ -130,7 +133,7 @@ describe("provider registry", () => {
     });
     expect(provider.id).toBe("pi");
     expect(provider.process.command).toBe("node");
-    expectBridgeSpawn(provider, { module: "/data/provider-bridges/pi.mjs" });
+    expectSourceBridgeSpawn(provider, "/data/provider-bridges/pi.mjs");
     expect(existsSync(provider.process.args.at(-4) ?? "")).toBe(true);
   });
 
@@ -144,11 +147,15 @@ describe("provider registry", () => {
       provider.buildCommandPlan({
         type: "model/list",
         cwd: "/tmp/project",
+        envVars: { CODEX_OPENAI_BASE_URL: "http://pool.test/v1" },
       }),
     ).toEqual({
       kind: "request",
       method: "model/list",
-      params: { cwd: "/tmp/project" },
+      params: {
+        cwd: "/tmp/project",
+        envVars: { CODEX_OPENAI_BASE_URL: "http://pool.test/v1" },
+      },
     });
   });
 
@@ -162,7 +169,9 @@ describe("provider registry", () => {
     });
 
     expect(provider.id).toBe("acp-custom");
-    expect(provider.buildCommandPlan({ type: "model/list" })).toMatchObject({
+    expect(
+      provider.buildCommandPlan({ type: "model/list", envVars: {} }),
+    ).toMatchObject({
       kind: "request",
       method: "model/list",
       params: {

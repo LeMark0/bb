@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { getExperiments } from "@bb/db";
-import { defaultExperiments, experimentsSchema } from "@bb/domain";
+import {
+  defaultAppSettings,
+  defaultExperiments,
+  earlyAdopterExperiments,
+  experimentsSchema,
+} from "@bb/domain";
 import { systemConfigResponseSchema } from "@bb/server-contract";
 import { readJson } from "../helpers/json.js";
 import { type TestAppHarness, withTestHarness } from "../helpers/test-app.js";
@@ -13,21 +18,20 @@ function putExperiments(harness: TestAppHarness, body: object) {
   });
 }
 
-describe("experiments settings", () => {
-  it("serves the shipped experiment defaults in /system/config", async () => {
-    await withTestHarness(async (harness) => {
-      const response = await harness.app.request("/api/v1/system/config");
-      expect(response.status).toBe(200);
-      const body = systemConfigResponseSchema.parse(await readJson(response));
-      expect(body.experiments).toEqual({
-        changelogPreview: false,
-        serverMove: false,
-        performanceDiagnostics: false,
-        timelinePush: false,
-      });
-    });
+function putGeneralSettings(harness: TestAppHarness, body: object) {
+  return harness.app.request("/api/v1/settings/general", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
+}
 
+async function configExperiments(harness: TestAppHarness) {
+  const response = await harness.app.request("/api/v1/system/config");
+  return systemConfigResponseSchema.parse(await readJson(response)).experiments;
+}
+
+describe("experiments settings", () => {
   it.each([false, true])(
     "reports startup permission %s independently of the experiment",
     async (available) => {
@@ -42,54 +46,37 @@ describe("experiments settings", () => {
     },
   );
 
-  it("persists a PUT and reflects it in /system/config", async () => {
+  it("persists every experiment a PUT sets and serves it in /system/config", async () => {
     await withTestHarness(async (harness) => {
-      const put = await harness.app.request("/api/v1/settings/experiments", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          changelogPreview: true,
-          serverMove: true,
-          performanceDiagnostics: true,
-          timelinePush: true,
-        }),
-      });
+      const allOn = Object.fromEntries(
+        Object.keys(defaultExperiments).map((key) => [key, true]),
+      );
+      const put = await putExperiments(harness, allOn);
       expect(put.status).toBe(200);
-      expect(experimentsSchema.parse(await readJson(put))).toEqual({
-        changelogPreview: true,
-        serverMove: true,
-        performanceDiagnostics: true,
-        timelinePush: true,
-      });
-      expect(getExperiments(harness.db)).toEqual({
-        changelogPreview: true,
-        serverMove: true,
-        performanceDiagnostics: true,
-        timelinePush: true,
-      });
-
-      const config = await harness.app.request("/api/v1/system/config");
-      expect(
-        systemConfigResponseSchema.parse(await readJson(config)).experiments,
-      ).toEqual({
-        changelogPreview: true,
-        serverMove: true,
-        performanceDiagnostics: true,
-        timelinePush: true,
-      });
+      expect(experimentsSchema.parse(await readJson(put))).toEqual(allOn);
+      expect(getExperiments(harness.db)).toEqual(allOn);
+      expect(await configExperiments(harness)).toEqual(allOn);
     });
   });
 
   it("changes only the experiments a PUT names", async () => {
     await withTestHarness(async (harness) => {
       await putExperiments(harness, { serverMove: true });
-      const put = await putExperiments(harness, { changelogPreview: true });
+      const put = await putExperiments(harness, { timelinePush: true });
       expect(put.status).toBe(200);
       expect(experimentsSchema.parse(await readJson(put))).toEqual({
-        changelogPreview: true,
+        compactExpiredCache: false,
+        dismissReadNotifications: false,
+        narrowPluginCss: false,
         serverMove: true,
         performanceDiagnostics: false,
-        timelinePush: false,
+        pluginUpdates: false,
+        resumeThreadsAfterRestart: false,
+        skipFocusedThreadNotifications: false,
+        threadContextCard: false,
+        threadRowMetadata: false,
+        timelinePush: true,
+        updateWhenIdle: false,
       });
       expect(
         harness.db.$client
@@ -98,7 +85,7 @@ describe("experiments settings", () => {
           )
           .all()
           .map((row) => row.key),
-      ).toEqual(["changelogPreview", "serverMove"]);
+      ).toEqual(["serverMove", "timelinePush"]);
     });
   });
 
@@ -110,6 +97,43 @@ describe("experiments settings", () => {
       const response = await putExperiments(harness, body);
       expect(response.status).toBe(400);
       expect(getExperiments(harness.db)).toEqual(defaultExperiments);
+    });
+  });
+
+  it("serves the early adopter defaults while the setting is on and keeps experiments the user set", async () => {
+    await withTestHarness(async (harness) => {
+      await putExperiments(harness, {
+        timelinePush: false,
+        pluginUpdates: false,
+      });
+      expect(
+        (
+          await putGeneralSettings(harness, {
+            ...defaultAppSettings,
+            earlyAdopter: true,
+          })
+        ).status,
+      ).toBe(200);
+      expect(await configExperiments(harness)).toEqual({
+        ...earlyAdopterExperiments,
+        timelinePush: false,
+        pluginUpdates: false,
+      });
+
+      harness.db.$client.prepare("DELETE FROM system_experiments").run();
+      expect(await configExperiments(harness)).toEqual(earlyAdopterExperiments);
+      expect((await configExperiments(harness)).pluginUpdates).toBe(true);
+
+      const { earlyAdopter: omitted, ...legacy } = defaultAppSettings;
+      expect(omitted).toBe(false);
+      expect((await putGeneralSettings(harness, legacy)).status).toBe(200);
+      expect(await configExperiments(harness)).toEqual(earlyAdopterExperiments);
+
+      await putGeneralSettings(harness, {
+        ...defaultAppSettings,
+        earlyAdopter: false,
+      });
+      expect(await configExperiments(harness)).toEqual(defaultExperiments);
     });
   });
 });

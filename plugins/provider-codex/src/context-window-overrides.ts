@@ -1,4 +1,7 @@
-import type { PluginSettingValue } from "@get-bb/plugin-sdk";
+import type {
+  ExperimentalPluginProviderLineageEntry,
+  PluginSettingValue,
+} from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const contextWindowOverrideSchema = z
@@ -24,64 +27,149 @@ const contextWindowOverrideSchema = z
     },
   );
 
-const BB_THREAD_ID_PATTERN = /^thr_[a-z0-9]+$/u;
+type ContextWindowOverride = z.infer<typeof contextWindowOverrideSchema>;
 
-const contextWindowOverridesSchema = z
-  .record(z.string(), contextWindowOverrideSchema)
-  .superRefine((overrides, context) => {
-    Object.keys(overrides)
-      .filter((threadId) => !BB_THREAD_ID_PATTERN.test(threadId))
-      .forEach((threadId) => {
-        context.addIssue({
-          code: "custom",
-          message: "keys must be bb thread ids",
-          path: [threadId],
-        });
+const BB_THREAD_ID_PATTERN = /^thr_[a-z0-9]+$/u;
+const TASKS_PRESET_ID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const TASKS_PLUGIN_ID = "tasks";
+
+function keyedEntriesSchema<Entry extends z.ZodType>(
+  entry: Entry,
+  keyPattern: RegExp,
+  keyMessage: string,
+) {
+  return z.record(z.string(), entry).superRefine((entries, context) => {
+    Object.keys(entries)
+      .filter((key) => !keyPattern.test(key))
+      .forEach((key) => {
+        context.addIssue({ code: "custom", message: keyMessage, path: [key] });
       });
   });
+}
 
-type ContextWindowOverrides = z.infer<typeof contextWindowOverridesSchema>;
+const contextWindowOverridesSchema = keyedEntriesSchema(
+  contextWindowOverrideSchema.nullable(),
+  BB_THREAD_ID_PATTERN,
+  "keys must be bb thread ids",
+);
 
-type ParsedContextWindowOverrides =
-  | { success: true; overrides: ContextWindowOverrides }
+const contextWindowPresetsSchema = keyedEntriesSchema(
+  contextWindowOverrideSchema,
+  TASKS_PRESET_ID_PATTERN,
+  "keys must be bb Tasks preset ids",
+);
+
+type Parsed<Value> =
+  | { success: true; value: Value }
   | { success: false; message: string };
 
-function parseContextWindowOverrides(
+function parseSettingJson<Schema extends z.ZodType>(
+  schema: Schema,
+  label: string,
   settingValue: string,
-): ParsedContextWindowOverrides {
-  if (settingValue.trim() === "") {
-    return { success: true, overrides: {} };
+): Parsed<z.infer<Schema>> {
+  let json: unknown = {};
+  if (settingValue.trim() !== "") {
+    try {
+      json = JSON.parse(settingValue);
+    } catch {
+      return { success: false, message: `${label} must be valid JSON.` };
+    }
   }
-  let json: unknown;
-  try {
-    json = JSON.parse(settingValue);
-  } catch {
-    return { success: false, message: "Context windows must be valid JSON." };
-  }
-  const parsed = contextWindowOverridesSchema.safeParse(json);
+  const parsed = schema.safeParse(json);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const location = issue?.path.join(".") ?? "";
     return {
       success: false,
-      message: `Context windows${location === "" ? "" : ` (${location})`}: ${issue?.message ?? "invalid value"}.`,
+      message: `${label}${location === "" ? "" : ` (${location})`}: ${issue?.message ?? "invalid value"}.`,
     };
   }
-  return { success: true, overrides: parsed.data };
+  return { success: true, value: parsed.data };
 }
 
-export const contextWindowOverridesSettingSchema = z
-  .string()
-  .superRefine((value, context) => {
-    const parsed = parseContextWindowOverrides(value);
+function settingSchema<Schema extends z.ZodType>(
+  schema: Schema,
+  label: string,
+) {
+  return z.string().superRefine((value, context) => {
+    const parsed = parseSettingJson(schema, label, value);
     if (!parsed.success) {
       context.addIssue({ code: "custom", message: parsed.message });
     }
   });
+}
+
+export const contextWindowOverridesSettingSchema = settingSchema(
+  contextWindowOverridesSchema,
+  "Context windows",
+);
+
+export const contextWindowPresetsSettingSchema = settingSchema(
+  contextWindowPresetsSchema,
+  "Preset context windows",
+);
+
+function storedEntries<Schema extends z.ZodType>(
+  schema: Schema,
+  settingValue: PluginSettingValue | undefined,
+): z.infer<Schema> | Record<string, never> {
+  if (typeof settingValue !== "string") {
+    return {};
+  }
+  const parsed = parseSettingJson(schema, "", settingValue);
+  return parsed.success ? parsed.value : {};
+}
+
+type LineageDecision =
+  | { kind: "entry"; entry: ContextWindowOverride | null }
+  | { kind: "none" };
+
+function tasksPresetDecision(
+  link: ExperimentalPluginProviderLineageEntry,
+  presets: Readonly<Record<string, ContextWindowOverride>>,
+): LineageDecision {
+  if (
+    link.originPluginId !== TASKS_PLUGIN_ID ||
+    !Object.hasOwn(link.originPluginMetadata, "presetId")
+  ) {
+    return { kind: "none" };
+  }
+  const presetId = link.originPluginMetadata.presetId;
+  return {
+    kind: "entry",
+    entry:
+      typeof presetId === "string" && Object.hasOwn(presets, presetId)
+        ? (presets[presetId] ?? null)
+        : null,
+  };
+}
+
+function linkDecision(
+  link: ExperimentalPluginProviderLineageEntry,
+  overrides: Readonly<Record<string, ContextWindowOverride | null>>,
+  presets: Readonly<Record<string, ContextWindowOverride>>,
+): LineageDecision {
+  return Object.hasOwn(overrides, link.threadId)
+    ? { kind: "entry", entry: overrides[link.threadId] ?? null }
+    : tasksPresetDecision(link, presets);
+}
+
+function nearestDecision(
+  lineage: readonly ExperimentalPluginProviderLineageEntry[],
+  overrides: Readonly<Record<string, ContextWindowOverride | null>>,
+  presets: Readonly<Record<string, ContextWindowOverride>>,
+): ContextWindowOverride | null {
+  const decision = lineage
+    .map((link) => linkDecision(link, overrides, presets))
+    .find((candidate) => candidate.kind === "entry");
+  return decision?.kind === "entry" ? decision.entry : null;
+}
 
 interface ContextWindowProviderOptionsArgs {
-  settingValue: PluginSettingValue | undefined;
-  threadId: string;
+  overridesValue: PluginSettingValue | undefined;
+  presetsValue: PluginSettingValue | undefined;
+  lineage: readonly ExperimentalPluginProviderLineageEntry[];
   model: string;
 }
 
@@ -93,15 +181,12 @@ type ContextWindowProviderOptions = {
 export function contextWindowProviderOptions(
   args: ContextWindowProviderOptionsArgs,
 ): ContextWindowProviderOptions {
-  if (typeof args.settingValue !== "string") {
-    return {};
-  }
-  const parsed = parseContextWindowOverrides(args.settingValue);
-  if (!parsed.success) {
-    return {};
-  }
-  const entry = parsed.overrides[args.threadId];
-  if (entry === undefined || entry.model !== args.model) {
+  const entry = nearestDecision(
+    args.lineage,
+    storedEntries(contextWindowOverridesSchema, args.overridesValue),
+    storedEntries(contextWindowPresetsSchema, args.presetsValue),
+  );
+  if (entry === null || entry.model !== args.model) {
     return {};
   }
   return {

@@ -1,6 +1,11 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { idSchema } from "../shared/contract";
+import {
+  idSchema,
+  presetPermissionModeSchema,
+  presetReasoningLevelSchema,
+  presetServiceTierSchema,
+} from "../shared/contract";
 
 const threadIdSchema = z.string().startsWith("thr_");
 
@@ -11,6 +16,24 @@ export const delegationRpcContract = defineRpcContract({
         taskId: idSchema,
         presetId: idSchema,
         extraInstructions: z.string().optional(),
+      })
+      .strict(),
+    output: z.object({ threadId: threadIdSchema }).strict(),
+  },
+  presetSpawn: {
+    input: z
+      .object({
+        presetId: idSchema,
+        projectId: z.string().trim().min(1),
+        prompt: z
+          .string()
+          .refine((value) => value.trim().length > 0, "must not be blank"),
+        title: z.string().trim().min(1).optional(),
+        environmentId: z.string().trim().min(1).optional(),
+        visibility: z.enum(["visible", "hidden"]).optional(),
+        reasoningLevel: presetReasoningLevelSchema.optional(),
+        serviceTier: presetServiceTierSchema.optional(),
+        permissionMode: presetPermissionModeSchema.optional(),
       })
       .strict(),
     output: z.object({ threadId: threadIdSchema }).strict(),

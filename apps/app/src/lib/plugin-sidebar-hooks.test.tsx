@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  renderHook as renderHookBase,
+} from "@testing-library/react";
 import { getDefaultStore } from "jotai";
 import { PERSONAL_PROJECT_ID, type ThreadListEntry } from "@bb/domain";
 import { getThreadConversationCollapsedAtom } from "@/components/secondary-panel/threadSecondaryPanelAtoms";
@@ -14,7 +18,6 @@ import {
   useSidebarThreadRowStatuses,
   useSidebarThreadShortcut,
   useSidebarThreads,
-  useSidebarThreadEntry,
 } from "./plugin-sidebar-hooks";
 import {
   clearPluginThreadRowStatuses,
@@ -22,6 +25,13 @@ import {
 } from "./plugin-thread-row-status";
 import { useEnvironmentProviders } from "./plugin-sdk-hooks";
 import { SidebarThreadShortcutKeysContext } from "@/components/sidebar/sidebarThreadShortcuts";
+import { SidebarThreadEntriesTestProvider } from "@/test/sidebarThreadEntriesTestProvider";
+
+const renderHook: typeof renderHookBase = (callback, options) =>
+  renderHookBase(callback, {
+    wrapper: SidebarThreadEntriesTestProvider,
+    ...options,
+  });
 
 const actions = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -263,17 +273,6 @@ describe("sidebar lifecycle selection", () => {
     expect(result.current.status).toBe("ready");
     expect(result.current.threads).toHaveLength(1);
     expect(result.current.experimental_archived?.status).toBe("error");
-  });
-
-  it("resolves archived entries for host-owned row actions and status", () => {
-    const archived = makeThreadListEntry({
-      id: "thr_archived",
-      archivedAt: 42,
-    });
-    state.data = payload([]);
-    archiveQuery.data = { pages: [[archived]] };
-    const { result } = renderHook(() => useSidebarThreadEntry(archived.id));
-    expect(result.current).toBe(archived);
   });
 });
 

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createConnection } from "../../src/connection.js";
 import { noopNotifier } from "../../src/notifier.js";
 import {
+  countTerminalSessions,
   createTerminalSession,
   listTerminalSessions,
+  pruneExitedTerminalSessions,
   updateTerminalSession,
   updateTerminalSessions,
 } from "../../src/data/terminal-sessions.js";
@@ -464,5 +466,160 @@ describe("terminal sessions", () => {
         }),
       ],
     );
+  });
+});
+
+describe("countTerminalSessions", () => {
+  it("preserves historical scoped counts and live standalone host/path counts", () => {
+    const { db, host, environment, thread } = setup();
+    try {
+      const otherHost = upsertHost(db, noopNotifier, { name: "other-host" });
+      const rows = [
+        {
+          hostId: host.id,
+          threadId: thread.id,
+          environmentId: environment.id,
+          status: "running",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: environment.id,
+          status: "running",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: thread.id,
+          environmentId: environment.id,
+          status: "exited",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: environment.id,
+          status: "exited",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: null,
+          status: "running",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: null,
+          status: "starting",
+          initialCwd: "/b",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: null,
+          status: "disconnected",
+          initialCwd: "/a",
+        },
+        {
+          hostId: host.id,
+          threadId: null,
+          environmentId: null,
+          status: "exited",
+          initialCwd: "/a",
+        },
+        {
+          hostId: otherHost.id,
+          threadId: null,
+          environmentId: null,
+          status: "running",
+          initialCwd: "/a",
+        },
+      ] as const;
+      for (const row of rows) {
+        createTerminalSession(db, {
+          ...row,
+          cols: 80,
+          rows: 24,
+          daemonSessionId: null,
+          title: "Terminal",
+        });
+      }
+      expect(
+        countTerminalSessions(db, {
+          scope: { kind: "thread", threadId: thread.id },
+          visible: false,
+        }),
+      ).toBe(2);
+      expect(
+        countTerminalSessions(db, {
+          scope: {
+            kind: "threadless-environment",
+            environmentId: environment.id,
+          },
+          visible: false,
+        }),
+      ).toBe(2);
+      for (const [cwd, expected] of [
+        [null, 3],
+        ["/a", 2],
+        ["/b", 1],
+        ["/missing", 0],
+      ] as const) {
+        expect(
+          countTerminalSessions(db, {
+            scope: { kind: "host-path", hostId: host.id, cwd },
+            visible: true,
+          }),
+        ).toBe(expected);
+      }
+    } finally {
+      db.$client.close();
+    }
+  });
+});
+
+describe("pruneExitedTerminalSessions", () => {
+  it("deletes only terminals that exited before the cutoff, oldest first", () => {
+    const fixture = setup();
+    const { db } = fixture;
+    try {
+      const terminalAt = (args: {
+        status: "exited" | "running";
+        updatedAt: number;
+      }) => {
+        const terminal = createStartingThreadlessTerminal(fixture);
+        db.$client
+          .prepare<[string, number, string]>(
+            "UPDATE terminal_sessions SET status = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(args.status, args.updatedAt, terminal.id);
+        return terminal.id;
+      };
+      terminalAt({ status: "exited", updatedAt: 100 });
+      terminalAt({ status: "exited", updatedAt: 200 });
+      const old = terminalAt({ status: "exited", updatedAt: 300 });
+      const recent = terminalAt({ status: "exited", updatedAt: 1_000 });
+      const running = terminalAt({ status: "running", updatedAt: 100 });
+      const remainingIds = () =>
+        listTerminalSessions(db, { scope: { kind: "all" }, visible: false })
+          .map((terminal) => terminal.id)
+          .sort();
+
+      expect(
+        pruneExitedTerminalSessions(db, { exitedBefore: 1_000, limit: 2 }),
+      ).toEqual({ deleted: 2 });
+      expect(remainingIds()).toEqual([old, recent, running].sort());
+
+      expect(
+        pruneExitedTerminalSessions(db, { exitedBefore: 1_000, limit: 2 }),
+      ).toEqual({ deleted: 1 });
+      expect(remainingIds()).toEqual([recent, running].sort());
+    } finally {
+      db.$client.close();
+    }
   });
 });

@@ -76,7 +76,7 @@ bb.providers.register({
     { id: "low", label: "Low" },
     { id: "high", label: "High" },
   ],
-  serviceTiers: undefined, // optional; open list of { id, label, description? },
+  serviceTiers: undefined, // optional; open list of { id, label, description?, experimental_icon? },
   // "default" is the standard tier; model/list is precise
   composerActions: ["plan"], // "plan" | "goal"
   completedTurnDisplay: "flat", // "collapse" (default) | "flat"; the user's per-provider setting wins
@@ -127,7 +127,7 @@ immediately, and refreshes it in the background once it is 10 minutes old.
 `"host"` scope means the bridge answers from account or agent state and
 ignores the workspace path, so bb probes once per machine. A stored answer is
 discarded when the bridge fingerprint changes (plugin bundle digest, bridge
-options, env passthrough). A list that depends on login state, CLI version, or
+options, env passthrough, contributed provider environment). A list that depends on login state, CLI version, or
 environment values is corrected only by the next refresh.
 
 `env.passthrough` names the daemon environment variables the bridge may read:
@@ -144,6 +144,13 @@ directory for an existing thread or a reused environment, and the project's
 checkout on the chosen machine for a new thread in a project. It is absent when
 neither is known (a thread without a project, or a project with no checkout on
 that machine). A `host`-scoped provider never receives it.
+
+Every `model/list` carries `envVars`: the provider environment plugins
+contribute for that machine through `bb.providers.experimental_contributeEnv`,
+resolved with a `null` thread and project and expanded like a session's
+`options.envVars`. A bridge whose catalog depends on credentials or routing,
+such as Codex behind the Account Pooler, launches its listing process with
+these values so the picker matches what new threads can use.
 
 Still experimental on the declaration (see api_to_audit.md):
 
@@ -377,8 +384,11 @@ mobile such a tint falls back to the neutral row colour (never to black).
 
 Genericity rule: model fallback, context cleared, compaction skipped, and
 background work stay core. Provider-specific concepts (Codex goals, the Codex
-`macos` permission profile) are that plugin's extension kinds. Core keeps no
-table of tool names.
+`macos` permission profile) are that plugin's extension kinds. The plugin's
+app reads a kind's latest state with `experimental_useThreadExtensionState`
+and draws it itself; the Codex Goal card is a thread-scoped composer banner
+that renders `experimental_CollapsibleStackCard`.
+Core keeps no table of tool names.
 
 ## 4. Interactions
 
@@ -478,6 +488,15 @@ The provider directory is available to plugins through
 mark is the icon its plugin declared — a path or declared icon served as
 `logoUrl` and drawn as a `currentColor` mask, or a host glyph name; core
 vendors no brand marks.
+
+`bb.sdk.providers.models`, `bb provider models`, and
+`GET /api/v1/system/execution-options` wait for model discovery when no good
+catalog is cached, so a recent discovery failure such as a timeout is retried
+instead of answered from cache; a failure of that retry is reported in
+`modelLoadError`. Concurrent reads share one discovery request. Interactive
+pickers pass `preferCached: true` to answer immediately from the cache,
+including a recent model-load failure, while discovery refreshes in the
+background.
 
 ## 6. Distribution
 

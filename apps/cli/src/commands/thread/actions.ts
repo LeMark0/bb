@@ -5,6 +5,7 @@ import {
   type PermissionMode,
   type ReasoningLevel,
   type ServiceTier,
+  type ThreadParentNotifications,
   type ThreadVisibility,
 } from "@bb/domain";
 import { threadEnvironmentUnavailableApiErrorSchema } from "@bb/server-contract";
@@ -30,9 +31,11 @@ import {
   resolveExplicitIdFlag,
 } from "../../context-env.js";
 import {
+  parseParentNotifications,
   parsePermissionMode,
   parseServiceTier,
   SERVICE_TIER_HELP,
+  PARENT_NOTIFICATIONS_HELP,
   PERMISSION_MODE_HELP,
   PLAN_HELP,
   buildPromptInputs,
@@ -51,6 +54,7 @@ interface ThreadUpdateCommandOptions {
   model?: string;
   reasoningLevel?: string;
   visibility?: string;
+  parentNotifications?: string;
 }
 
 interface ThreadArchiveCommandOptions {
@@ -73,6 +77,11 @@ interface ThreadPinCommandOptions {
   json?: boolean;
 }
 
+interface ThreadRegenerateTitleCommandOptions {
+  self?: boolean;
+  json?: boolean;
+}
+
 interface ThreadDeleteCommandOptions {
   confirmChildThreads?: boolean;
   yes?: boolean;
@@ -91,6 +100,9 @@ interface ThreadTellCommandOptions {
   file?: string[];
   image?: string[];
   sendAt?: string;
+  compactFirst?: boolean;
+  progress?: boolean;
+  endsTurn?: boolean;
 }
 
 interface ThreadActionOptions {
@@ -130,6 +142,9 @@ interface PostThreadMessageArgs {
   files?: readonly string[];
   images?: readonly string[];
   sendAt?: number;
+  compactFirst: boolean;
+  progress: boolean;
+  progressEndsTurn: boolean;
 }
 
 // The server's own answer plus the mode we asked for. `sendAt` used to be
@@ -147,6 +162,7 @@ interface ThreadUpdateBody {
   model?: string;
   reasoningLevel?: ReasoningLevel;
   visibility?: ThreadVisibility;
+  parentNotifications?: ThreadParentNotifications;
 }
 
 export function registerActionsCommands(
@@ -172,6 +188,7 @@ export function registerActionsCommands(
       "Set the sticky reasoning level applied on the thread's next turn: low, medium, high, xhigh, max (provider-dependent)",
     )
     .option("--visibility <visibility>", "Thread visibility: visible or hidden")
+    .option("--parent-notifications <value>", PARENT_NOTIFICATIONS_HELP)
     .action(
       action(
         async (id: string | undefined, opts: ThreadUpdateCommandOptions) => {
@@ -188,6 +205,9 @@ export function registerActionsCommands(
             opts.visibility === undefined
               ? undefined
               : threadVisibilitySchema.parse(opts.visibility);
+          const parentNotifications = parseParentNotifications(
+            opts.parentNotifications,
+          );
           if (
             !opts.parentThread &&
             !opts.clearParentThread &&
@@ -196,10 +216,11 @@ export function registerActionsCommands(
             !opts.title &&
             !opts.model &&
             !reasoningLevel &&
-            !visibility
+            !visibility &&
+            !parentNotifications
           ) {
             throw new Error(
-              "No changes requested. Provide --title, --parent-thread, --clear-parent-thread, --section, --clear-section, --model, --reasoning-level, or --visibility.",
+              "No changes requested. Provide --title, --parent-thread, --clear-parent-thread, --section, --clear-section, --model, --reasoning-level, --visibility, or --parent-notifications.",
             );
           }
 
@@ -234,6 +255,9 @@ export function registerActionsCommands(
           if (visibility) {
             body.visibility = visibility;
           }
+          if (parentNotifications) {
+            body.parentNotifications = parentNotifications;
+          }
 
           const sdk = createCliBbSdk(getUrl());
           const thread = await sdk.threads.update({ threadId, ...body });
@@ -262,6 +286,9 @@ export function registerActionsCommands(
           }
           if (visibility) {
             console.log(`Visibility: ${visibility}`);
+          }
+          if (parentNotifications) {
+            console.log(`Parent notifications: ${parentNotifications}`);
           }
         },
       ),
@@ -382,6 +409,38 @@ export function registerActionsCommands(
   }
 
   parent
+    .command("regenerate-title [id]")
+    .description(
+      "Replace a thread's title with one generated from its task and latest messages",
+    )
+    .option("--self", "Target the current thread (from BB_THREAD_ID)")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string | undefined,
+          opts: ThreadRegenerateTitleCommandOptions,
+        ) => {
+          const threadId = requireThreadIdOrSelf(id, opts);
+          const sdk = createCliBbSdk(getUrl());
+          let thread;
+          try {
+            thread = await sdk.threads.experimental_regenerateTitle({
+              threadId,
+            });
+          } catch (err: unknown) {
+            throw prependErrorContext(
+              `Failed to regenerate the title of thread ${threadId}`,
+              err,
+            );
+          }
+          if (outputJson(opts, thread)) return;
+          console.log(`Thread ${thread.id} titled "${thread.title}"`);
+        },
+      ),
+    );
+
+  parent
     .command("delete <id>")
     .description("Delete a thread permanently")
     .option("--yes", "Skip the confirmation prompt")
@@ -500,6 +559,18 @@ export function registerActionsCommands(
       "Message mode: steer (default), queue, or auto (steer a live turn, else start one)",
     )
     .option("--send-at <when>", SEND_AT_HELP)
+    .option(
+      "--compact-first",
+      "Compact the idle thread's context first, then send this message when compaction finishes",
+    )
+    .option(
+      "--progress",
+      "Hold the message as a progress update for this thread's parent: it starts no turn and goes first with the parent's next turn. Sent normally unless the sender (BB_THREAD_ID) is a child of <id>",
+    )
+    .option(
+      "--ends-turn",
+      "With --progress: the update also stands for the end of the sender's current turn, so that turn's completion does not notify the parent. A failed or interrupted turn, and every later turn, still notify",
+    )
     .option("--plan", PLAN_HELP)
     .option(
       "--file <path>",
@@ -526,6 +597,10 @@ export function registerActionsCommands(
             inline: inlineMessage,
             inlineLabel: "<message>",
           });
+          if (opts.endsTurn === true && opts.progress !== true) {
+            throw new Error("--ends-turn requires --progress");
+          }
+          if (opts.progress === true) assertProgressTellOptions(opts);
           const response = await postThreadMessage({
             getUrl,
             threadId: id,
@@ -542,9 +617,18 @@ export function registerActionsCommands(
             ...(opts.sendAt === undefined
               ? {}
               : { sendAt: parseSendAt(opts.sendAt) }),
+            compactFirst: opts.compactFirst === true,
+            progress: opts.progress === true,
+            progressEndsTurn: opts.endsTurn === true,
           });
           if (outputJson(opts, { threadId: id, ...response })) return;
-          console.log(describeThreadTellOutcome(id, response));
+          console.log(
+            opts.compactFirst === true
+              ? `Thread ${id} compacting; the message sends when compaction finishes`
+              : opts.progress === true
+                ? describeThreadProgressOutcome(id, response)
+                : describeThreadTellOutcome(id, response),
+          );
         },
       ),
     );
@@ -609,7 +693,7 @@ export function registerActionsCommands(
     },
     {
       name: "clear-goal",
-      description: "Ask the provider to clear the active Goal",
+      description: "Ask the provider to clear the thread's Goal",
       method: "clearGoal",
       done: "cleared its Goal",
     },
@@ -663,6 +747,9 @@ async function postThreadMessage(
       ...(args.serviceTier ? { serviceTier: args.serviceTier } : {}),
       ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {}),
       ...(args.sendAt === undefined ? {} : { sendAt: args.sendAt }),
+      ...(args.compactFirst ? { compactFirst: true } : {}),
+      ...(args.progress ? { progress: true } : {}),
+      ...(args.progressEndsTurn ? { progressEndsTurn: true } : {}),
     });
   } catch (error: unknown) {
     throw await withRestoreEnvironmentHint(sdk, args.threadId, error);
@@ -689,6 +776,45 @@ async function withRestoreEnvironmentHint(
       ? `Its workspace was removed. Restore it with \`bb thread restore-environment ${threadId}\`, then send again.`
       : "Its workspace was removed and its environment provider cannot restore it. Start a new thread to continue.",
   });
+}
+
+const PROGRESS_EXCLUSIVE_TELL_OPTIONS = [
+  ["model", "--model"],
+  ["serviceTier", "--service-tier"],
+  ["reasoningLevel", "--reasoning-level"],
+  ["permissionMode", "--permission-mode"],
+  ["mode", "--mode"],
+  ["sendAt", "--send-at"],
+  ["compactFirst", "--compact-first"],
+  ["plan", "--plan"],
+] as const;
+
+function assertProgressTellOptions(opts: ThreadTellCommandOptions): void {
+  const conflicts: string[] = [
+    ...PROGRESS_EXCLUSIVE_TELL_OPTIONS.filter(
+      ([key]) => opts[key] !== undefined && opts[key] !== false,
+    ).map(([, flag]) => flag),
+    ...((opts.file?.length ?? 0) > 0 ? ["--file"] : []),
+    ...((opts.image?.length ?? 0) > 0 ? ["--image"] : []),
+  ];
+  if (conflicts.length > 0) {
+    throw new Error(
+      `--progress cannot be combined with ${conflicts.join(", ")}`,
+    );
+  }
+}
+
+function describeThreadProgressOutcome(
+  threadId: string,
+  response: PostThreadMessageResult,
+): string {
+  if (
+    response.delivery === "queued" &&
+    response.queuedMessage.waitingOn?.kind === "progress"
+  ) {
+    return `Thread ${threadId} progress update held; it goes with the thread's next turn`;
+  }
+  return `Not held as progress because the sender is not a child of ${threadId}. ${describeThreadTellOutcome(threadId, response)}`;
 }
 
 function describeThreadTellOutcome(
@@ -744,8 +870,14 @@ export function describeQueueWait(row: {
       return `waiting for ${waitingOn.hostName} to reconnect`;
     case "interaction":
       return "waiting for a pending interaction";
+    case "app-update":
+      return "sending after bb restarts to update";
     case "plugin":
       return `${waitingOn.pluginId}: ${waitingOn.reason}`;
+    case "superseded":
+      return "not sent: a newer message was sent after it";
+    case "progress":
+      return "progress update: sends with the thread's next turn";
   }
 }
 
