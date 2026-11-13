@@ -46,9 +46,7 @@ import {
   type WorkspaceCheckoutDisplay,
 } from "@bb/shared-ui/lib/workspace-checkout-display";
 import type { PickerOption } from "@/components/pickers/OptionPicker";
-import {
-  selectWorkspaceChangedFilesSection,
-} from "../../../../../plugins/git/ui/workspace-change-summary";
+import { selectWorkspaceChangedFilesSection } from "../../../../../plugins/git/ui/workspace-change-summary";
 import { StoryCard, StoryRow } from "../../../.ladle/story-card";
 import {
   GitSegmentFixtureProvider,
@@ -70,6 +68,7 @@ import type {
 } from "@/components/promptbox/ExecutionControls";
 import { PageShell } from "@/components/ui/page-shell.js";
 import {
+  buildFollowUpSubmitMode,
   promptDraftToInput,
   type PromptDraftState,
   queuedInputToDraft,
@@ -439,20 +438,20 @@ const contextBannerElement: ReactNode = dirtyContextBannerSection ? (
       mergeBase: gitSegmentFixtureMergeBase(),
     }}
   >
-  <ThreadPromptContextBanner
-    input={{
-      threadId: "thr_story",
-      projectId: "proj_story",
-      environment: null,
-    }}
-    core={{
-      parentThread: null,
-    }}
-    archivedSection={null}
-    environmentGoneSection={null}
-    expandedSegment={null}
-    onToggleSegment={noop}
-  />
+    <ThreadPromptContextBanner
+      input={{
+        threadId: "thr_story",
+        projectId: "proj_story",
+        environment: null,
+      }}
+      core={{
+        parentThread: null,
+      }}
+      archivedSection={null}
+      environmentGoneSection={null}
+      expandedSegment={null}
+      onToggleSegment={noop}
+    />
   </GitSegmentFixtureProvider>
 ) : null;
 
@@ -565,6 +564,9 @@ interface RowConfig {
     typeof FollowUpPromptBox
   >[0]["activePromptMode"];
   readOnly?: boolean;
+  steerActiveThreadOnEnter?: boolean;
+  pendingInteraction?: ReactNode;
+  queueOnSubmit?: boolean;
 }
 
 type FollowUpComposerRuntimeStatus = NonNullable<
@@ -604,6 +606,9 @@ function Row({
   permission = basePermission,
   activePromptMode = null,
   readOnly = false,
+  steerActiveThreadOnEnter = false,
+  pendingInteraction = null,
+  queueOnSubmit = false,
 }: RowConfig) {
   const [message, setMessage] = useState(initialMessage);
   const [queueExpanded, setQueueExpanded] = useState(true);
@@ -765,6 +770,17 @@ function Row({
         }
       />
     );
+  const queueStoryDraft = useCallback(() => {
+    const text = message.trim();
+    if (text.length === 0) return;
+    setStoryQueuedMessages((current) => [
+      ...current,
+      makeStoryQueuedMessage(`q_story_${current.length + 1}`, text),
+    ]);
+    setMessage("");
+    setMentionRanges([]);
+  }, [message]);
+  const submitStoryDraft = queueOnSubmit ? queueStoryDraft : noop;
   const resolvedStack = queueElement ? (
     <>
       {stack}
@@ -796,15 +812,17 @@ function Row({
                 mentionRanges,
                 onChangeMessage: handleChangeMessage,
                 onModifierSubmit: noop,
-                onSubmit: noop,
+                onSubmit: submitStoryDraft,
                 compactPromptPlaceholder: resolvedCompactPlaceholder,
                 promptPlaceholder: resolvedPlaceholder,
-                canModifierSubmit: submitMode.kind === "queue",
-                steerActiveThreadOnEnter: false,
+                canModifierSubmit:
+                  submitMode.kind === "queue" && message.trim().length > 0,
+                steerActiveThreadOnEnter,
                 submitMode,
                 threadRuntimeDisplayStatus,
               }
         }
+        pendingInteraction={pendingInteraction}
         environmentSummary={environmentSummary}
         contextWindowUsage={contextWindowUsage}
         compactBeforeSend={compactBeforeSend}
@@ -1001,6 +1019,99 @@ export function Overview() {
           submitMode={{ kind: "queue", onStop: noop }}
           threadRuntimeDisplayStatus="starting"
           environmentSummary={provisioningEnvironmentSummary}
+        />
+      </StoryRow>
+    </StoryCard>
+  );
+}
+
+const busyThreadQueuedMessages: readonly ThreadQueuedMessage[] = [
+  makeStoryQueuedMessage(
+    "q_busy_1",
+    "Then update the changelog for this release.",
+  ),
+];
+
+function busySubmitMode(hasPendingInteraction: boolean): FollowUpSubmitMode {
+  return buildFollowUpSubmitMode({
+    hasPendingInteraction,
+    isDefaultExecutionOptionsLoading: false,
+    isStopRequested: false,
+    onStop: noop,
+    runtimeDisplayStatus: "active",
+  });
+}
+
+const syntheticApprovalCard = (
+  <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+    Synthetic approval: allow Bash to run <code>pnpm test</code>?
+  </div>
+);
+
+export function BusyThreadQueue() {
+  return (
+    <StoryCard>
+      <StoryRow
+        label="busy · empty draft"
+        hint="synthetic fixture: the thread is running a command and Enter steers (the default preference)"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-steers-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · draft typed · Enter steers"
+        hint="synthetic fixture: Queue in the send menu (or the modifier shortcut) adds the draft to the queue above; steering is not simulated"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-steers-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          initialMessage="Also check the mobile layout once this finishes."
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · draft typed · Enter queues"
+        hint="synthetic fixture: the preference set to queue on Enter"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-queues-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          queueOnSubmit
+          initialMessage="Also check the mobile layout once this finishes."
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · awaiting approval"
+        hint="synthetic fixture: the run waits on an approval; a follow-up can still be queued for later"
+      >
+        <Row
+          submitMode={busySubmitMode(true)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          initialMessage="After this, open a PR."
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-queues-on-enter",
+          )}
+          queuedMessages={busyThreadQueuedMessages}
+          pendingInteraction={syntheticApprovalCard}
         />
       </StoryRow>
     </StoryCard>

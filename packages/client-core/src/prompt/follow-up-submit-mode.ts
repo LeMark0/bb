@@ -14,4 +14,5 @@ export type FollowUpSubmitMode =
   | { kind: "ready" }
   | { kind: "queue"; onStop: () => void }
   | { kind: "queue-while-stopping" }
+  | { kind: "queue-while-awaiting-interaction"; onStop: () => void }
   | { kind: "blocked"; reason: FollowUpBlockedReason };

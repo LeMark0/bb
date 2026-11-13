@@ -260,7 +260,10 @@ function FollowUpPromptBoxWithComposer({
   const hasPendingInteraction =
     pendingInteraction !== null && pendingInteraction !== undefined;
   const isStopping = submitMode.kind === "queue-while-stopping";
-  const canQueueFollowUp = submitMode.kind === "queue" || isStopping;
+  const isAwaitingInteraction =
+    submitMode.kind === "queue-while-awaiting-interaction";
+  const queuesOnEnter = submitMode.kind === "queue" || isAwaitingInteraction;
+  const canQueueFollowUp = queuesOnEnter || isStopping;
   const canSubmit = submitMode.kind === "ready" || canQueueFollowUp;
   const isLoadingExecutionOptions =
     submitMode.kind === "blocked" &&
@@ -268,7 +271,10 @@ function FollowUpPromptBoxWithComposer({
   const isUnavailable =
     submitMode.kind === "blocked" && submitMode.reason === "unavailable";
   const onStopRuntime =
-    submitMode.kind === "queue" ? submitMode.onStop : undefined;
+    submitMode.kind === "queue" ||
+    submitMode.kind === "queue-while-awaiting-interaction"
+      ? submitMode.onStop
+      : undefined;
   const canStopRuntime = onStopRuntime !== undefined;
   const attachmentCount = attachments.items?.length ?? 0;
   const composerScope =
@@ -710,7 +716,7 @@ function FollowUpPromptBoxWithComposer({
       data-follow-up-composer-footer-visible={
         isCompactViewport && isEditorExpanded ? "" : undefined
       }
-      hidden={hasPendingInteraction}
+      hidden={hasPendingInteraction && !canQueueFollowUp}
       onBlurCapture={scheduleCollapseAfterFocusLoss}
       onFocusCapture={handleComposerFocus}
       onPointerDownCapture={handleComposerPointerDown}
@@ -728,14 +734,20 @@ function FollowUpPromptBoxWithComposer({
         onEscape={composer.onEscape}
         textEffects={textEffects}
         onComposerLayoutChange={setComposerLayout}
-        scrollToBottomOnSubmit={submitMode.kind !== "queue"}
+        scrollToBottomOnSubmit={!queuesOnEnter}
         history={composer.history}
         focusEndKey={focusEndKey}
         placeholder={composer.promptPlaceholder}
         mentionMenuPlacement="top"
         submission={{
           label: composer.submitLabel,
-          icon: composer.submitIcon,
+          icon:
+            composer.submitIcon ??
+            (canQueueFollowUp
+              ? steerOnPrimarySubmit
+                ? "CornerDownRight"
+                : "ListEnd"
+              : undefined),
           onStop: onStopRuntime,
           isSubmitting: composer.isFollowUpSubmitting,
           disabled:
@@ -750,7 +762,7 @@ function FollowUpPromptBoxWithComposer({
                 ? "Unavailable"
                 : undefined,
           onModifierSubmit,
-          queuesDraft: submitMode.kind === "queue",
+          queuesDraft: queuesOnEnter,
           swapSubmitActions: steerOnPrimarySubmit,
           showModifierSubmitAction: submitMode.kind === "queue",
           title: composer.isFollowUpSubmitting
@@ -761,17 +773,19 @@ function FollowUpPromptBoxWithComposer({
                 ? composer.submitTitle
                 : isStopping
                   ? "Queue for after the stop (Enter)"
-                  : canQueueFollowUp
-                    ? steerOnPrimarySubmit
-                      ? isSteeringWhenReady
-                        ? `Steer when ready (Enter)${modifierSubmitHint("queue")}`
-                        : `Steer current run (Enter)${modifierSubmitHint("queue")}`
-                      : `Queue follow-up (Enter)${modifierSubmitHint("steer")}`
-                    : isLoadingExecutionOptions
-                      ? "Loading models..."
-                      : isUnavailable
-                        ? "Unavailable"
-                        : "Submit (Enter)",
+                  : isAwaitingInteraction
+                    ? "Queue for after this run (Enter)"
+                    : canQueueFollowUp
+                      ? steerOnPrimarySubmit
+                        ? isSteeringWhenReady
+                          ? `Steer when ready (Enter)${modifierSubmitHint("queue")}`
+                          : `Steer current run (Enter)${modifierSubmitHint("queue")}`
+                        : `Queue follow-up (Enter)${modifierSubmitHint("steer")}`
+                      : isLoadingExecutionOptions
+                        ? "Loading models..."
+                        : isUnavailable
+                          ? "Unavailable"
+                          : "Submit (Enter)",
           isRunning: canStopRuntime,
         }}
         typeahead={typeahead}

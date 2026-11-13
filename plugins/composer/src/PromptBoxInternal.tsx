@@ -371,7 +371,10 @@ function PromptSubmitButton({
         />
       ) : (
         <>
-          <SdkIcon name={icon ?? "CornerDownLeft"} className="size-4" />
+          <SdkIcon
+            name={icon ?? "CornerDownLeft"}
+            className={cn("size-4", icon === "ListEnd" && "-scale-x-100")}
+          />
           {label !== undefined && !isCompact ? (
             <span data-promptbox-submit-label="">{label}</span>
           ) : null}
@@ -2920,9 +2923,7 @@ export function PromptBoxInternal({
       popups,
     ],
   );
-  const showStop = Boolean(
-    isRunning && onStop && !canSubmit && !isAttaching && !showVoiceActionGroup,
-  );
+  const showStop = Boolean(isRunning && onStop && !showVoiceActionGroup);
   const canStartVoiceInput =
     voice !== undefined && voice.isSupported && !isSubmitting;
   const showVoiceAsPrimaryAction =
@@ -2931,9 +2932,7 @@ export function PromptBoxInternal({
     !hasSubmittableInput &&
     canStartVoiceInput;
   const showCompactVoiceAction =
-    showCompactLayout &&
-    canStartVoiceInput &&
-    (!showVoiceAsPrimaryAction || showStop);
+    showCompactLayout && canStartVoiceInput && !showVoiceAsPrimaryAction;
   const handleVoicePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       if (!isPointerCoarse || event.button !== 0) return;
@@ -3598,7 +3597,7 @@ export function PromptBoxInternal({
                     <>
                       {voice &&
                       !showVoiceActionGroup &&
-                      (!showVoiceAsPrimaryAction || showStop) ? (
+                      !showVoiceAsPrimaryAction ? (
                         <VoiceInputButton
                           warning={voice?.microphoneWarning ?? null}
                           data-promptbox-expanded-only={
@@ -3638,18 +3637,20 @@ export function PromptBoxInternal({
                         variant="secondary"
                         aria-label="Stop run"
                         onClick={onStop}
-                        className={
+                        className={cn(
                           showCompactLayout
                             ? COMPACT_PROMPT_ACTION_BUTTON_CLASS
-                            : COARSE_POINTER_PROMPT_ICON_ACTION_BUTTON_CLASS
-                        }
+                            : COARSE_POINTER_PROMPT_ICON_ACTION_BUTTON_CLASS,
+                          "mr-2",
+                        )}
                       >
                         <Icon
                           name="Square"
                           className="size-3.5 fill-current [&_*]:stroke-0"
                         />
                       </Button>
-                    ) : showVoiceAsPrimaryAction ? (
+                    ) : null}
+                    {showVoiceAsPrimaryAction ? (
                       <VoiceInputButton
                         warning={voice?.microphoneWarning ?? null}
                         data-promptbox-submit-action=""

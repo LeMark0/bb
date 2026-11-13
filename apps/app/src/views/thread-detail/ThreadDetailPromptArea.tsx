@@ -983,12 +983,18 @@ export function ThreadDetailPromptArea({
     isStopRequested,
     runtimeDisplayStatus,
   ]);
-  const promptPlaceholder = getFollowUpPromptPlaceholder(
-    isStopRequested ? "stopping" : runtimeDisplayStatus,
-  );
-  const compactPromptPlaceholder = getCompactFollowUpPromptPlaceholder(
-    isStopRequested ? "stopping" : runtimeDisplayStatus,
-  );
+  const placeholderState = isStopRequested
+    ? "stopping"
+    : submitMode.kind === "queue-while-awaiting-interaction"
+      ? "active-queues-on-enter"
+      : submitMode.kind === "queue" && runtimeDisplayStatus === "active"
+        ? steerActiveThreadOnEnter
+          ? "active-steers-on-enter"
+          : "active-queues-on-enter"
+        : runtimeDisplayStatus;
+  const promptPlaceholder = getFollowUpPromptPlaceholder(placeholderState);
+  const compactPromptPlaceholder =
+    getCompactFollowUpPromptPlaceholder(placeholderState);
   const providerIds = useMemo(
     () => providerOptions.map((option) => option.value),
     [providerOptions],
@@ -1523,7 +1529,9 @@ export function ThreadDetailPromptArea({
         ? { kind: "ready" }
         : submitMode.kind === "blocked"
           ? submitMode
-          : { kind: "blocked", reason: "unavailable" },
+          : submitMode.kind === "queue-while-awaiting-interaction"
+            ? { kind: "blocked", reason: "pending-interaction" }
+            : { kind: "blocked", reason: "unavailable" },
     [canSubmitSentMessageEdit, sentMessageEditInput.length, submitMode],
   );
   const handleSentMessageEditSubmit = useCallback(() => {
@@ -2091,6 +2099,63 @@ export function ThreadDetailPromptArea({
   ]);
   const contextBannerKey = `thread-prompt-context-banner:${thread.id}`;
   const childThreadsBannerKey = `thread-child-threads-banner:${thread.id}`;
+  const queuedMessagesElement = useMemo(
+    () =>
+      shouldHideComposer ? null : queuedMessagesPending ? (
+        <QueuedMessagesPendingCard queuedMessageCount={queuedMessageCount} />
+      ) : (
+        <LazyQueuedMessagesList
+          attachedToComposer={true}
+          queuedMessages={drawerQueuedMessages}
+          resolveMentionLink={resolveMentionLink}
+          inlineEditor={queuedMessageEditor ?? undefined}
+          sendAction={shouldSteerWhenReady ? "steer-when-ready" : "send-now"}
+          sendDisabled={
+            submitMode.kind === "blocked" ||
+            hasPendingInteraction ||
+            runtimeDisplayStatus === "waiting-for-host" ||
+            isFollowUpSubmitting ||
+            isQueueMutationPending
+          }
+          actionDisabled={isQueueMutationPending}
+          processingMessageId={displayedProcessingQueuedMessage?.id ?? null}
+          processingAction={displayedProcessingQueuedMessage?.action ?? null}
+          onSend={handleSendQueuedMessage}
+          onReorder={handleReorderQueuedMessage}
+          onSetGroupBoundary={handleSetQueuedMessageGroupBoundary}
+          onEdit={beginEditQueuedMessage}
+          onChangeSendTime={handleChangeQueuedMessageSendTime}
+          onDelete={handleDeleteQueuedMessage}
+          expanded={queueExpanded}
+          onExpandedChange={setQueueExpanded}
+          threadStatus={thread.status}
+        />
+      ),
+    [
+      beginEditQueuedMessage,
+      displayedProcessingQueuedMessage,
+      drawerQueuedMessages,
+      handleChangeQueuedMessageSendTime,
+      handleDeleteQueuedMessage,
+      handleReorderQueuedMessage,
+      handleSendQueuedMessage,
+      handleSetQueuedMessageGroupBoundary,
+      hasPendingInteraction,
+      isFollowUpSubmitting,
+      isQueueMutationPending,
+      queueExpanded,
+      queuedMessageCount,
+      queuedMessageEditor,
+      queuedMessagesPending,
+      resolveMentionLink,
+      runtimeDisplayStatus,
+      setQueueExpanded,
+      shouldHideComposer,
+      shouldSteerWhenReady,
+      submitMode.kind,
+      thread.status,
+    ],
+  );
   const promptStack = useMemo(
     () => (
       <>
@@ -2180,40 +2245,11 @@ export function ThreadDetailPromptArea({
             threadId={thread.id}
           />
         ) : null}
-        {shouldHideComposer ? null : queuedMessagesPending ? (
-          <QueuedMessagesPendingCard queuedMessageCount={queuedMessageCount} />
-        ) : (
-          <LazyQueuedMessagesList
-            attachedToComposer={true}
-            queuedMessages={drawerQueuedMessages}
-            resolveMentionLink={resolveMentionLink}
-            inlineEditor={queuedMessageEditor ?? undefined}
-            sendAction={shouldSteerWhenReady ? "steer-when-ready" : "send-now"}
-            sendDisabled={
-              submitMode.kind === "blocked" ||
-              runtimeDisplayStatus === "waiting-for-host" ||
-              isFollowUpSubmitting ||
-              isQueueMutationPending
-            }
-            actionDisabled={isQueueMutationPending}
-            processingMessageId={displayedProcessingQueuedMessage?.id ?? null}
-            processingAction={displayedProcessingQueuedMessage?.action ?? null}
-            onSend={handleSendQueuedMessage}
-            onReorder={handleReorderQueuedMessage}
-            onSetGroupBoundary={handleSetQueuedMessageGroupBoundary}
-            onEdit={beginEditQueuedMessage}
-            onChangeSendTime={handleChangeQueuedMessageSendTime}
-            onDelete={handleDeleteQueuedMessage}
-            expanded={queueExpanded}
-            onExpandedChange={setQueueExpanded}
-            threadStatus={thread.status}
-          />
-        )}
+        {queuedMessagesElement}
       </>
     ),
     [
-      queueExpanded,
-      setQueueExpanded,
+      queuedMessagesElement,
       childThreadsBannerKey,
       contextBannerKey,
       isChildThreadsExpanded,
@@ -2221,23 +2257,13 @@ export function ThreadDetailPromptArea({
       expandedBannerSegment,
       contextEnvironmentId,
       thread.projectId,
-      thread.status,
-      handleChangeQueuedMessageSendTime,
-      handleDeleteQueuedMessage,
-      beginEditQueuedMessage,
-      handleReorderQueuedMessage,
-      handleSendQueuedMessage,
-      handleSetQueuedMessageGroupBoundary,
       handleToggleBannerSegment,
       handleUnarchiveCurrentThread,
       handleRestoreCurrentEnvironment,
       canRestoreEnvironment,
       environmentGoneStatus,
-      isFollowUpSubmitting,
       isRestoreCurrentEnvironmentPending,
       isUnarchiveCurrentThreadPending,
-      isQueueMutationPending,
-      queuedMessageEditor,
       activePromptModeCard,
       isTodoExpanded,
       activeWorkflows,
@@ -2250,15 +2276,7 @@ export function ThreadDetailPromptArea({
       parentThreadSection,
       childThreadsSection,
       pendingTodos,
-      displayedProcessingQueuedMessage,
-      queuedMessageCount,
-      drawerQueuedMessages,
-      queuedMessagesPending,
-      resolveMentionLink,
-      runtimeDisplayStatus,
-      shouldSteerWhenReady,
       shouldHideComposer,
-      submitMode.kind,
       thread.archivedAt,
       thread.id,
     ],
@@ -2280,6 +2298,9 @@ export function ThreadDetailPromptArea({
     shouldHideComposer,
     thread.id,
   ]);
+  const queuesBesideInteraction =
+    submitMode.kind === "queue-while-awaiting-interaction" ||
+    submitMode.kind === "queue-while-stopping";
   const pendingInteractionStack = useMemo(
     () => (
       <>
@@ -2290,6 +2311,7 @@ export function ThreadDetailPromptArea({
           onExpandedChange={setIsChildThreadsExpanded}
         />
         {activePromptMode ? activePromptModeCard : null}
+        {queuesBesideInteraction ? queuedMessagesElement : null}
       </>
     ),
     [
@@ -2298,6 +2320,8 @@ export function ThreadDetailPromptArea({
       childThreadsBannerKey,
       childThreadsSection,
       isChildThreadsExpanded,
+      queuedMessagesElement,
+      queuesBesideInteraction,
     ],
   );
 
