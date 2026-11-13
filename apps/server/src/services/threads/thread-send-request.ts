@@ -10,6 +10,7 @@ import type {
 import { ApiError } from "../../errors.js";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { attemptDispatch } from "./dispatch-attempt.js";
+import { holdChildProgressUpdate } from "./held-progress-updates.js";
 import { requireThreadCommandEnvironment } from "./thread-command-environment.js";
 import { assertThreadHostAcceptsWork } from "./thread-host-admission.js";
 import { runWithTurnTrace } from "../system/turn-trace.js";
@@ -29,7 +30,18 @@ export async function acceptThreadSendRequest(
     input: args.payload.input,
     providerId: args.thread.providerId,
   });
-  const { compactFirst, ...request } = args.payload;
+  const { compactFirst, progress, progressEndsTurn, ...request } = args.payload;
+  if (progress === true) {
+    const held = await holdChildProgressUpdate(deps, {
+      endsTurn: progressEndsTurn === true,
+      input: request.input,
+      senderThreadId: request.senderThreadId,
+      thread: args.thread,
+    });
+    if (held !== null) {
+      return { ok: true, delivery: "queued", queuedMessage: held };
+    }
+  }
   if (isStandaloneBuiltinClearCommand(request.input)) {
     if (compactFirst) throwInvalidCompactFirst("cannot clear the context");
     const environment = await requireThreadCommandEnvironment(deps, {

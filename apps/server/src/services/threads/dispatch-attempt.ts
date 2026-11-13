@@ -8,6 +8,7 @@ import {
 } from "../machines/lifecycle.js";
 import {
   deleteClaimedQueuedThreadMessageBatchInTransaction,
+  deliverHeldProgressQueuedThreadMessagesInTransaction,
   getEnvironment,
   getExperiments,
   hasLiveQueuedRetry,
@@ -17,10 +18,13 @@ import {
   isThreadQueueAutoSendPaused,
   listRunningThreads,
   type ClaimedQueuedThreadMessageRow,
+  type QueuedThreadMessageRow,
   type RunningThreadRow,
 } from "@bb/db";
 import {
   createStandaloneBuiltinCompactCommandInput,
+  isStandaloneBuiltinClearCommand,
+  isStandaloneBuiltinCompactCommand,
   promptInputSchema,
   type PromptInput,
   type QueuedMessagePayload,
@@ -90,11 +94,17 @@ import {
   toThreadResponseFromThread,
 } from "./thread-runtime-display.js";
 import { toThreadQueuedMessage } from "./thread-queued-messages.js";
+import {
+  heldProgressParts,
+  listHeldProgressForDispatch,
+} from "./held-progress-updates.js";
 import { isPreStartThreadStatus } from "./thread-status.js";
 import { queueInputForStartingTurn } from "./thread-turn-starting.js";
 import {
   ensureThreadIsWritable,
   formatAgentThreadInput,
+  prependHeldProgress,
+  type HeldProgressPart,
   resolveMessageSenderThreadId,
   sendThreadMessage,
   type SendThreadMessageTransactionPreflight,
@@ -245,6 +255,7 @@ export type DispatchAttemptSource =
   | {
       kind: "operation";
       environment: EnvironmentRow;
+      retainedProgress?: HeldProgressPart[];
       beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
       historyReplacement?: {
         forkSourceProviderThreadId: string | null;
@@ -335,25 +346,66 @@ function deliveryModeForSendMode(
   return mode === "queue-if-active" || mode === "start" ? "queue" : "steer";
 }
 
+const OPERATION_HELD_PROGRESS_ATTEMPTS = 3;
+
+class HeldProgressChangedError extends Error {}
+
+function isContextOperationInput(input: readonly PromptInput[]): boolean {
+  return (
+    isStandaloneBuiltinClearCommand(input) ||
+    isStandaloneBuiltinCompactCommand(input)
+  );
+}
+
 async function runOperationDispatch(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: DispatchAttemptArgs,
   source: Extract<DispatchAttemptSource, { kind: "operation" }>,
 ): Promise<DispatchAttemptOutcome> {
-  await sendThreadMessage(deps, {
-    environment: source.environment,
-    originPluginId: args.originPluginId,
-    payload: args.payload,
-    thread: args.thread,
-    trigger: args.trigger,
-    ...(source.beforeAppendInTransaction !== undefined
-      ? { beforeAppendInTransaction: source.beforeAppendInTransaction }
-      : {}),
-    ...(source.historyReplacement !== undefined
-      ? { historyReplacement: source.historyReplacement }
-      : {}),
-  });
-  return { kind: "dispatched" };
+  for (let attempt = 1; ; attempt += 1) {
+    const heldProgress = isContextOperationInput(args.payload.input)
+      ? []
+      : listHeldProgressForDispatch(deps.db, args.thread.id, null);
+    try {
+      await sendThreadMessage(deps, {
+        environment: source.environment,
+        originPluginId: args.originPluginId,
+        payload: args.payload,
+        thread: args.thread,
+        trigger: args.trigger,
+        leadingProgress: [
+          ...(source.retainedProgress ?? []),
+          ...heldProgressParts(heldProgress),
+        ],
+        beforeAppendInTransaction: (context) => {
+          source.beforeAppendInTransaction?.(context);
+          if (
+            !deliverHeldProgressQueuedThreadMessagesInTransaction(
+              context.tx,
+              heldProgress,
+            )
+          ) {
+            throw new HeldProgressChangedError();
+          }
+        },
+        ...(source.historyReplacement !== undefined
+          ? { historyReplacement: source.historyReplacement }
+          : {}),
+      });
+    } catch (error) {
+      if (
+        error instanceof HeldProgressChangedError &&
+        attempt < OPERATION_HELD_PROGRESS_ATTEMPTS
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    if (heldProgress.length > 0) {
+      deps.hub.notifyThread(args.thread.id, ["queue-changed"]);
+    }
+    return { kind: "dispatched" };
+  }
 }
 
 interface DispatchAttemptRun {
@@ -462,9 +514,7 @@ async function runDispatchAttempt(
     deliveryMode: run.deliveryMode,
   };
 
-  const retriesGoFirst = getExperiments(
-    deps.db,
-  ).resumeThreadsAfterRestart;
+  const retriesGoFirst = getExperiments(deps.db).resumeThreadsAfterRestart;
   const waitOn = (
     waitingOn: QueuedMessageWaitingOn,
     sendAt: number | null,
@@ -632,6 +682,7 @@ async function runDispatchAttempt(
       admitted.value = await admitPendingThread(deps, {
         author,
         claimed,
+        heldProgress: listHeldProgressForDispatch(deps.db, thread.id, claimed),
         originPluginId: args.originPluginId,
         payload:
           senderThreadId === null
@@ -730,13 +781,7 @@ async function runDispatchAttempt(
       // for a thread that is gone. Reporting a dispatch here would tell the
       // caller their message went when it went nowhere.
       const current = getThread(deps.db, thread.id);
-      return reattemptDispatchForThreadChange(
-        deps,
-        args,
-        current,
-        run,
-        waitOn,
-      );
+      return reattemptDispatchForThreadChange(deps, args, current, run, waitOn);
     }
     await launchAdmittedThread(deps, admission);
     return { kind: "dispatched" };
@@ -744,6 +789,7 @@ async function runDispatchAttempt(
 
   markTurnTraceSpan("dispatch.checkpoint.done");
   const environment = await requireThreadCommandEnvironment(deps, { thread });
+  const heldProgress = listHeldProgressForDispatch(deps.db, thread.id, claimed);
   try {
     await sendThreadMessage(deps, {
       environment,
@@ -751,6 +797,9 @@ async function runDispatchAttempt(
       payload: resolvedPayload,
       thread,
       trigger: args.trigger,
+      ...(heldProgress.length > 0
+        ? { leadingProgress: heldProgressParts(heldProgress) }
+        : {}),
       ...(systemNotice !== null ? { systemNotice } : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       beforeAppendInTransaction: ({ tx }) => {
@@ -763,6 +812,14 @@ async function runDispatchAttempt(
             thread.id,
             respectManualStopPause,
           )({ tx });
+        }
+        if (
+          !deliverHeldProgressQueuedThreadMessagesInTransaction(
+            tx,
+            heldProgress,
+          )
+        ) {
+          throw new DispatchThreadStatusChangedError();
         }
       },
     });
@@ -780,6 +837,9 @@ async function runDispatchAttempt(
   }
   if (claimed !== null) {
     settleQueueRowDispatched({ row: claimed[0]! });
+  }
+  if (heldProgress.length > 0) {
+    deps.hub.notifyThread(thread.id, ["queue-changed"]);
   }
   return { kind: "dispatched" };
 }
@@ -850,6 +910,7 @@ function consumeClaimedRows(
 interface AdmitPendingThreadArgs {
   author: DispatchAuthor;
   claimed: ClaimedQueuedThreadMessageRow[] | null;
+  heldProgress: QueuedThreadMessageRow[];
   originPluginId: string | null;
   payload: SendMessageRequest & { inputGroups?: PromptInput[][] };
   respectManualStopPause: boolean;
@@ -911,6 +972,10 @@ async function admitPendingThread(
     threadId: args.thread.id,
   });
   const claimedRow = args.claimed?.[0] ?? null;
+  const startPrompt = prependHeldProgress(
+    { input: args.payload.input },
+    heldProgressParts(args.heldProgress),
+  );
   let startingThread: Thread;
   try {
     startingThread = deps.db.transaction(
@@ -925,6 +990,14 @@ async function admitPendingThread(
             args.thread.id,
             args.respectManualStopPause,
           )({ tx });
+        }
+        if (
+          !deliverHeldProgressQueuedThreadMessagesInTransaction(
+            tx,
+            args.heldProgress,
+          )
+        ) {
+          throw new HeldProgressChangedError();
         }
         const prepared = applyLoggedThreadLifecycleEventInTransaction(
           { db: tx, logger: deps.logger },
@@ -941,7 +1014,13 @@ async function admitPendingThread(
           environmentIntent: startContext.environmentIntent,
           execution,
           fork: startContext.fork,
-          input: args.payload.input,
+          input: startPrompt.input,
+          ...(startPrompt.inputGroups !== undefined
+            ? { inputGroups: startPrompt.inputGroups }
+            : {}),
+          ...(startPrompt.progressSenders !== undefined
+            ? { progressSenders: startPrompt.progressSenders }
+            : {}),
           originPluginId: args.originPluginId,
           ...(startContext.providerInput === undefined
             ? {}
@@ -955,6 +1034,9 @@ async function admitPendingThread(
       { behavior: "immediate" },
     );
   } catch (error) {
+    if (error instanceof HeldProgressChangedError) {
+      return null;
+    }
     if (!(error instanceof PendingThreadAdmissionLost)) {
       throw error;
     }
@@ -971,6 +1053,9 @@ async function admitPendingThread(
     ["status-changed"],
     buildThreadStatusChangeMetadata(deps, startingThread),
   );
+  if (args.heldProgress.length > 0) {
+    deps.hub.notifyThread(startingThread.id, ["queue-changed"]);
+  }
   return {
     claimedRow,
     startingThread,

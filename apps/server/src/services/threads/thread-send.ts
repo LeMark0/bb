@@ -99,6 +99,42 @@ type SendThreadMessagePayload = SendMessageRequest & {
   inputGroups?: PromptInput[][];
 };
 
+export interface HeldProgressPart {
+  input: PromptInput[];
+  senderThreadId: string;
+}
+
+interface PromptWithProgress {
+  input: PromptInput[];
+  inputGroups?: PromptInput[][];
+  progressSenders?: string[];
+}
+
+export function prependHeldProgress(
+  prompt: { input: PromptInput[]; inputGroups?: PromptInput[][] },
+  parts: readonly HeldProgressPart[],
+): PromptWithProgress {
+  if (parts.length === 0) return prompt;
+  const inputGroups = [
+    ...parts.map((part) => part.input),
+    ...(prompt.inputGroups ?? [prompt.input]),
+  ];
+  return {
+    input: flattenPromptInputGroups(inputGroups),
+    inputGroups,
+    progressSenders: parts.map((part) => part.senderThreadId),
+  };
+}
+
+function ownInputOf(prompt: PromptWithProgress): PromptInput[] {
+  return prompt.progressSenders === undefined ||
+    prompt.inputGroups === undefined
+    ? prompt.input
+    : flattenPromptInputGroups(
+        prompt.inputGroups.slice(prompt.progressSenders.length),
+      );
+}
+
 interface SendThreadMessageArgs {
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
   /**
@@ -112,6 +148,7 @@ interface SendThreadMessageArgs {
     forkSourceProviderThreadId: string | null;
     onCommandSettled?: () => void | Promise<void>;
   };
+  leadingProgress?: HeldProgressPart[];
   originPluginId: string | null;
   payload: SendThreadMessagePayload;
   systemNotice?: QueuedMessageSystemNotice;
@@ -165,9 +202,11 @@ interface AppendAndQueueSendThreadMessageArgs {
   environmentId: string | null;
   execution: ResolvedThreadExecutionOptions;
   initiator: ThreadTurnInitiator;
+  historyInput: PromptInput[];
   input: PromptInput[];
   inputGroups?: PromptInput[][];
   originPluginId: string | null;
+  progressSenders?: string[];
   queueInTransaction: SendThreadMessageQueueRequest;
   requestId: ClientTurnRequestId;
   senderThreadId: string | null;
@@ -421,9 +460,11 @@ function appendAndQueueSendThreadMessageInTransaction({
   environmentId,
   execution,
   initiator,
+  historyInput,
   input,
   inputGroups,
   originPluginId,
+  progressSenders,
   queueInTransaction,
   requestId,
   senderThreadId,
@@ -446,6 +487,7 @@ function appendAndQueueSendThreadMessageInTransaction({
             ...(retryOf !== undefined ? { retryOf } : {}),
             input,
             ...(inputGroups !== undefined ? { inputGroups } : {}),
+            ...(progressSenders !== undefined ? { progressSenders } : {}),
             execution,
             initiator,
             originPluginId,
@@ -466,7 +508,7 @@ function appendAndQueueSendThreadMessageInTransaction({
         { db: tx },
         {
           thread,
-          input,
+          input: historyInput,
           initiator,
           target,
           requestSequence: appended.sequence,
@@ -555,6 +597,11 @@ async function sendThreadMessageWithoutContextClear(
     { input, ...(inputGroups !== undefined ? { inputGroups } : {}) },
     deferredFirstTurnContext,
   ));
+  let progressSenders: string[] | undefined;
+  ({ input, inputGroups, progressSenders } = prependHeldProgress(
+    { input, ...(inputGroups !== undefined ? { inputGroups } : {}) },
+    args.leadingProgress ?? [],
+  ));
   const beforeAppendInTransaction: SendThreadMessageTransactionPreflight = ({
     tx,
   }) => {
@@ -580,6 +627,11 @@ async function sendThreadMessageWithoutContextClear(
   inputGroups = inputGroups?.map((group) =>
     group.map((item) => resolvedByInput.get(item) ?? item),
   );
+  const historyInput = ownInputOf({
+    input,
+    ...(inputGroups !== undefined ? { inputGroups } : {}),
+    ...(progressSenders !== undefined ? { progressSenders } : {}),
+  });
   // Agent-originated CLI sends still appear as normal turn requests in the
   // timeline, while initiator lets policy distinguish the source. A retry is
   // `system` whatever the original was: nobody asked for it a second time, and
@@ -648,6 +700,7 @@ async function sendThreadMessageWithoutContextClear(
       input,
       inputGroups,
       originPluginId: args.originPluginId,
+      ...(progressSenders !== undefined ? { progressSenders } : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       senderThreadId,
       ...(args.systemNotice !== undefined
@@ -724,6 +777,8 @@ async function sendThreadMessageWithoutContextClear(
         }
       : await prepareReadyThreadTurnCommand(deps, commandArgs);
     const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+      historyInput,
+      ...(progressSenders !== undefined ? { progressSenders } : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       beforeAppendInTransaction: ({ tx }) => {
         beforeAppendInTransaction({ tx });
@@ -829,6 +884,8 @@ async function sendThreadMessageWithoutContextClear(
     requestId,
   });
   const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+    historyInput,
+    ...(progressSenders !== undefined ? { progressSenders } : {}),
     ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
     beforeAppendInTransaction,
     db: deps.db,

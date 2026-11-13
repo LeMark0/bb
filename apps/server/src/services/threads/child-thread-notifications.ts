@@ -6,7 +6,11 @@ import {
   type ThreadEventTurnStatus,
   type ChildThreadOutcome,
 } from "@bb/domain";
-import { getThread, listActiveBackgroundTaskCountsByThreadIds } from "@bb/db";
+import {
+  getThread,
+  hasHeldProgressEndingTurn,
+  listActiveBackgroundTaskCountsByThreadIds,
+} from "@bb/db";
 import { renderTemplate } from "@bb/templates";
 import { z } from "zod";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
@@ -432,6 +436,18 @@ async function queueChildThreadTurnNotificationBatchItem(
     !parentThread ||
     parentThread.archivedAt !== null ||
     parentThread.deletedAt !== null
+  ) {
+    return;
+  }
+  if (
+    args.turnStatus === "completed" &&
+    args.turnId !== null &&
+    args.failureContext === undefined &&
+    hasHeldProgressEndingTurn(deps.db, {
+      senderThreadId: args.childThread.id,
+      threadId: parentThread.id,
+      turnId: args.turnId,
+    })
   ) {
     return;
   }

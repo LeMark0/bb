@@ -35,6 +35,7 @@ interface DispatchTurnDuringReprovisionArgs {
   input: PromptInput[];
   inputGroups?: PromptInput[][];
   originPluginId: string | null;
+  progressSenders?: string[];
   retryOf?: TurnRequestRetryMarker;
   senderThreadId: string | null;
   systemMessageKind?: SystemMessageKind;
@@ -89,6 +90,9 @@ export async function dispatchTurnDuringReprovision(
       input: args.input,
       inputGroups: args.inputGroups,
       originPluginId: args.originPluginId,
+      ...(args.progressSenders !== undefined
+        ? { progressSenders: args.progressSenders }
+        : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       senderThreadId: args.senderThreadId,
       systemMessageKind: args.systemMessageKind,

@@ -7,6 +7,7 @@ import { cancelProviderEnvironmentCreation } from "../environments/environment-e
 import { getPreparingEnvironment } from "@bb/db";
 import { getThread, type DbTransaction, type EnvironmentRow } from "@bb/db";
 import {
+  flattenPromptInputGroups,
   type EnvironmentProviderSelection,
   type PromptInput,
   type ResolvedThreadExecutionOptions,
@@ -61,7 +62,9 @@ interface RequestThreadProvisionArgs {
   execution: ResolvedThreadExecutionOptions;
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  inputGroups?: PromptInput[][];
   originPluginId: string | null;
+  progressSenders?: string[];
   providerInput?: PromptInput[];
   retryOf?: TurnRequestRetryMarker;
   startedOnBehalfOf: StartedOnBehalfOf | null;
@@ -77,6 +80,7 @@ interface RequestThreadTargetReprovisionArgs {
   inputGroups?: PromptInput[][];
   initiator: ThreadTurnInitiator;
   originPluginId: string | null;
+  progressSenders?: string[];
   retryOf?: TurnRequestRetryMarker;
   senderThreadId: string | null;
   systemMessageKind?: SystemMessageKind;
@@ -307,6 +311,12 @@ export function requestThreadProvision(
       type: "client/turn/requested",
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       input: args.input,
+      ...(args.inputGroups !== undefined
+        ? { inputGroups: args.inputGroups }
+        : {}),
+      ...(args.progressSenders !== undefined
+        ? { progressSenders: args.progressSenders }
+        : {}),
       execution: args.execution,
       initiator,
       originPluginId: args.originPluginId,
@@ -317,7 +327,12 @@ export function requestThreadProvision(
     });
     recordAcceptedPromptHistoryEntry(deps, {
       thread: args.thread,
-      input: args.input,
+      input:
+        args.progressSenders !== undefined && args.inputGroups !== undefined
+          ? flattenPromptInputGroups(
+              args.inputGroups.slice(args.progressSenders.length),
+            )
+          : args.input,
       initiator,
       target,
       requestSequence: request.sequence,
@@ -337,6 +352,9 @@ export function requestThreadProvision(
       execution: args.execution,
       fork: args.fork,
       input: args.providerInput ?? args.input,
+      ...(args.providerInput === undefined && args.inputGroups !== undefined
+        ? { inputGroups: args.inputGroups }
+        : {}),
       initiator,
       senderThreadId,
       seedWithoutRun: args.startedOnBehalfOf !== null,
@@ -458,6 +476,9 @@ function appendReprovisionTurnRequest(
             ...(args.inputGroups !== undefined
               ? { inputGroups: args.inputGroups }
               : {}),
+            ...(args.progressSenders !== undefined
+              ? { progressSenders: args.progressSenders }
+              : {}),
             execution: args.execution,
             initiator: args.initiator,
             originPluginId: args.originPluginId,
@@ -474,7 +495,12 @@ function appendReprovisionTurnRequest(
         { db: tx },
         {
           thread: args.thread,
-          input: args.input,
+          input:
+            args.progressSenders !== undefined && args.inputGroups !== undefined
+              ? flattenPromptInputGroups(
+                  args.inputGroups.slice(args.progressSenders.length),
+                )
+              : args.input,
           initiator: args.initiator,
           target: { kind: "new-turn" },
           requestSequence: request.sequence,

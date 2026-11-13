@@ -601,11 +601,14 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "sendAt is present only when the caller is scheduling the dispatch, and compactFirst only when it asks to compact before the message; omission means attempt the dispatch now, which allocates no queued row at all when nothing blocks it.",
+      "sendAt is present only when the caller is scheduling the dispatch, compactFirst only when it asks to compact before the message, progress only when a child asks its parent to hold the message as a progress update, and progressEndsTurn (stored as the progress wait's endsTurnId) only when that update also stands for the end of the sender's running turn; omission means attempt the dispatch now, which allocates no queued row at all when nothing blocks it.",
     fields: [
       "createThreadRequestSchema.sendAt",
       "sendMessageRequestSchema.sendAt",
       "sendMessageRequestSchema.compactFirst",
+      "sendMessageRequestSchema.progress",
+      "sendMessageRequestSchema.progressEndsTurn",
+      "sendQueuedMessageResponseSchema.queuedMessage.waitingOn.endsTurnId",
     ],
   },
   {

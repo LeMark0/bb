@@ -80,6 +80,7 @@ export const turnRequestEventDataSchema = z.object({
   systemMessageSubject: systemMessageSubjectSchema.nullable().optional(),
   input: z.array(promptInputSchema),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
+  progressSenders: z.array(z.string().min(1)).min(1).optional(),
   target: turnRequestTargetSchema,
   request: z.object({
     method: z.enum(["thread/start", "turn/start"]),
@@ -96,6 +97,23 @@ export type TurnRequestEventData = z.infer<typeof turnRequestEventDataSchema>;
  * since the discriminated unions the base schema feeds cannot carry a
  * refinement themselves.
  */
+export function refineTurnRequestProgressSenders(
+  data: Pick<TurnRequestEventData, "inputGroups" | "progressSenders">,
+  ctx: z.RefinementCtx,
+): void {
+  if (
+    data.progressSenders !== undefined &&
+    (data.inputGroups === undefined ||
+      data.progressSenders.length >= data.inputGroups.length)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "progressSenders needs inputGroups with at least one group after the progress groups",
+    });
+  }
+}
+
 export function refineTurnRequestRetryMarker(
   data: Pick<TurnRequestEventData, "retryOfRequestId" | "retryAttempt">,
   ctx: z.RefinementCtx,

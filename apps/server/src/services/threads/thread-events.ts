@@ -88,6 +88,7 @@ interface ClientTurnRequestedEventArgs {
   input: PromptInput[];
   inputGroups?: PromptInput[][];
   originPluginId: string | null;
+  progressSenders?: string[];
   requestMethod: "thread/start" | "turn/start";
   senderThreadId: string | null;
   source: "spawn" | "tell";
@@ -223,6 +224,9 @@ function buildClientTurnRequestedEventData(
     input: args.input,
     ...(args.inputGroups !== undefined
       ? { inputGroups: args.inputGroups }
+      : {}),
+    ...(args.progressSenders !== undefined && args.progressSenders.length > 0
+      ? { progressSenders: args.progressSenders }
       : {}),
     target: args.target,
     execution: args.execution,

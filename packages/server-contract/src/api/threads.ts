@@ -307,7 +307,49 @@ const sendMessageRequestFieldsSchema = z.object({
   compactFirst: z.literal(true).optional(),
 });
 
-export const sendMessageRequestSchema = sendMessageRequestFieldsSchema;
+const progressExclusiveSendFields = [
+  "model",
+  "serviceTier",
+  "reasoningLevel",
+  "permissionMode",
+  "executionInputSources",
+  "originPluginId",
+  "pluginSubmission",
+  "sendAt",
+  "compactFirst",
+] as const;
+
+export const sendMessageRequestSchema = sendMessageRequestFieldsSchema
+  .extend({
+    progress: z.literal(true).optional(),
+    progressEndsTurn: z.literal(true).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.progressEndsTurn !== undefined && value.progress === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "progressEndsTurn requires progress",
+        path: ["progressEndsTurn"],
+      });
+    }
+    if (value.progress === undefined) return;
+    if (value.mode !== "steer-if-active") {
+      ctx.addIssue({
+        code: "custom",
+        message: 'progress updates use mode "steer-if-active"',
+        path: ["mode"],
+      });
+    }
+    for (const field of progressExclusiveSendFields) {
+      if (value[field] !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: `progress cannot be combined with ${field}`,
+          path: [field],
+        });
+      }
+    }
+  });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
 /**
