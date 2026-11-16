@@ -80,7 +80,12 @@ if (first === "--version" && second === undefined) {
 
 afterEach(() => {
   restoreEnv();
-  rmSync(binDir, { recursive: true, force: true });
+  rmSync(binDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 50,
+  });
 });
 
 async function loadWithSyncServiceOnce(

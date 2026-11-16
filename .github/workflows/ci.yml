@@ -73,7 +73,7 @@ jobs:
     name: Validate dependencies
     needs: plan
     if: ${{ needs.plan.outputs.dependencies == 'true' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ github.repository == 'LeMark0/bb' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
   windows-dependency-cache:
     name: Warm Windows dependencies
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: ${{ github.repository == 'LeMark0/bb' && 'windows-2025' || 'blacksmith-4vcpu-windows-2025' }}
     timeout-minutes: 10
     continue-on-error: true
     permissions:
