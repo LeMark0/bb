@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ScrollPositionKeeper } from "@/components/ui/scroll-position-keeper";
-import { installFakeFlowLayout } from "@/test/fake-flow-layout";
+import { installFakeFlowLayout, setFakeHeight } from "@/test/fake-flow-layout";
 import { TimelineWindowedItems } from "./TimelineWindowedItems.js";
 
 const VIEWPORT_HEIGHT = 600;
@@ -24,6 +24,16 @@ afterEach(() => {
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function stubCheckVisibility(visible: boolean): void {
+  Object.defineProperty(Element.prototype, "checkVisibility", {
+    configurable: true,
+    value: () => visible,
+  });
+  cleanups.push(() => {
+    Reflect.deleteProperty(Element.prototype, "checkVisibility");
+  });
 }
 
 function keys(count: number, prefix = "row"): string[] {
@@ -117,6 +127,13 @@ function setup({
       const top = topOf(key);
       return top < VIEWPORT_HEIGHT && top + heightOf(key) > 0;
     });
+  const spacersInView = () =>
+    [
+      ...list.querySelectorAll<HTMLElement>("[data-timeline-window-spacer]"),
+    ].filter((spacer) => {
+      const rect = spacer.getBoundingClientRect();
+      return rect.height > 0 && rect.top < VIEWPORT_HEIGHT && rect.bottom > 0;
+    });
   const extent = () => layout.maxScrollTop() + VIEWPORT_HEIGHT;
   const totalHeight = (itemKeys: string[]) =>
     itemKeys.reduce((sum, key) => sum + heightOf(key), 0) +
@@ -130,6 +147,7 @@ function setup({
     list,
     measurements,
     mounted,
+    spacersInView,
     topOf,
     totalHeight,
     view,
@@ -489,5 +507,78 @@ describe("TimelineWindowedItems", () => {
 
     expect(cancel).toHaveBeenCalled();
     expect(harness.list.childElementCount).toBe(0);
+  });
+
+  it("keeps the viewport covered when mounted rows render shorter than the window model expects", async () => {
+    const collapsed = (key: string) => {
+      const index = Number(key.split("-")[1]);
+      return index >= 120 && index < 150;
+    };
+    stubCheckVisibility(true);
+    const harness = setup({
+      attached: false,
+      heightOf: (key) => (collapsed(key) ? 0 : 80),
+    });
+    const itemKeys = keys(220);
+    render(harness.view(itemKeys, { pinnedToEnd: false }), {
+      container: harness.list,
+    });
+
+    const uncovered: number[] = [];
+    for (let top = 0; top < harness.layout.maxScrollTop(); top += 250) {
+      act(() => harness.layout.userScrollTo(top));
+      act(() => harness.layout.flushResizeObservers());
+      await act(nextFrame);
+      if (harness.spacersInView().length > 0) uncovered.push(top);
+    }
+
+    expect(uncovered).toEqual([]);
+  });
+
+  it("keeps remembered heights when rows report zero because the timeline is hidden", () => {
+    const harness = setup({ attached: true });
+    const itemKeys = keys(200);
+    render(harness.view(itemKeys), { container: harness.list });
+    act(() => harness.layout.flushResizeObservers());
+    const mounted = harness.mounted();
+    const remembered = mounted.map((key) => harness.measurements.get(key));
+    expect(
+      remembered.every((height) => height !== undefined && height > 0),
+    ).toBe(true);
+
+    stubCheckVisibility(false);
+    for (const row of harness.list.querySelectorAll("[data-timeline-row-id]")) {
+      setFakeHeight(row, 0);
+    }
+    act(() => harness.layout.flushResizeObservers());
+
+    expect(mounted.map((key) => harness.measurements.get(key))).toEqual(
+      remembered,
+    );
+  });
+
+  it("decides whether a zero height is real from client rects where checkVisibility is missing", () => {
+    const harness = setup({ attached: true });
+    render(harness.view(keys(200)), { container: harness.list });
+    act(() => harness.layout.flushResizeObservers());
+    const [hiddenKey = "", shownKey = ""] = harness.mounted().slice(-2);
+    const remembered = harness.measurements.get(hiddenKey);
+    const shownRow = harness.list.querySelector(
+      `[data-timeline-row-id="${shownKey}"]`,
+    );
+    const rect = new DOMRect(0, 0, 400, 0);
+    vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function (
+      this: Element,
+    ) {
+      return (this === shownRow ? [rect] : []) as unknown as DOMRectList;
+    });
+    for (const key of [hiddenKey, shownKey]) {
+      const row = harness.list.querySelector(`[data-timeline-row-id="${key}"]`);
+      if (row !== null) setFakeHeight(row, 0);
+    }
+    act(() => harness.layout.flushResizeObservers());
+
+    expect(harness.measurements.get(hiddenKey)).toBe(remembered);
+    expect(harness.measurements.get(shownKey)).toBe(0);
   });
 });
