@@ -169,6 +169,12 @@ function windowKeysAround(
   return keys;
 }
 
+function isRendered(element: Element): boolean {
+  return typeof element.checkVisibility === "function"
+    ? element.checkVisibility()
+    : element.getClientRects().length > 0;
+}
+
 function heldKeyOf(positionKeeper: ScrollPositionKeeper): string | null {
   const position = positionKeeper.getPosition();
   return position.kind === "anchor"
@@ -364,8 +370,9 @@ export function TimelineWindowedItems({
   }, [measurements]);
 
   const record = useCallback(
-    (key: string, height: number): boolean => {
-      if (height <= 0 || measurements.get(key) === height) return false;
+    (element: Element, key: string, height: number): boolean => {
+      if (!(height >= 0) || measurements.get(key) === height) return false;
+      if (height === 0 && !isRendered(element)) return false;
       recordTimelineMeasurement(measurements, key, height);
       measurementRevisionRef.current += 1;
       return true;
@@ -385,7 +392,7 @@ export function TimelineWindowedItems({
         const height =
           entry.borderBoxSize?.[0]?.blockSize ??
           entry.target.getBoundingClientRect().height;
-        if (record(key, height)) changed = true;
+        if (record(entry.target, key, height)) changed = true;
       }
       if (changed) positionKeeper?.reconcile();
     });
@@ -404,7 +411,7 @@ export function TimelineWindowedItems({
     (node: HTMLDivElement | null) => {
       if (node === null) return undefined;
       const key = node.getAttribute(WINDOW_KEY_ATTRIBUTE);
-      if (key !== null) record(key, node.getBoundingClientRect().height);
+      if (key !== null) record(node, key, node.getBoundingClientRect().height);
       const observer = getObserver();
       observer?.observe(node);
       return () => {
