@@ -13,7 +13,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { PriorityIcon, StatusIcon } from "./icons.js";
 import {
@@ -146,17 +153,26 @@ function SearchField({
         className="h-6 pl-6 pr-6 text-xs max-md:pointer-coarse:h-10 max-md:pointer-coarse:pr-10 [&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
       />
       {value.length > 0 ? (
-        <button
-          type="button"
-          aria-label="Clear search"
-          onClick={() => {
-            onChange("");
-            inputRef.current?.focus();
-          }}
-          className="absolute right-0.5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring max-md:pointer-coarse:size-9"
-        >
-          <Icon name="X" className="size-3" />
-        </button>
+        <TooltipProvider delayDuration={300}>
+          <Tooltip disableHoverableContent>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Clear search"
+                onClick={() => {
+                  onChange("");
+                  inputRef.current?.focus();
+                }}
+                className="absolute right-0.5 top-1/2 size-5 -translate-y-1/2 text-muted-foreground hover:text-foreground max-md:pointer-coarse:size-9 [&_[data-icon-root]]:size-3"
+              >
+                <Icon name="X" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Clear search</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       ) : null}
     </div>
   );

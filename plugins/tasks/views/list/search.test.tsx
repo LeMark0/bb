@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { Task } from "../../shared/contract.js";
@@ -125,6 +125,22 @@ describe("Tasks list search", () => {
 
     expect(await slot.findByText("ΟΣ")).toBeTruthy();
     expect(slot.queryByText("No tasks match “Σ”")).toBeNull();
+  });
+
+  it("clears the search from the field's clear button and keeps focus there", async () => {
+    const slot = renderList([], { "": everyTask, rotate: [everyTask[1]!] });
+    await slot.findByText("Deploy runbook");
+    fireEvent.change(searchBox(slot), { target: { value: "rotate" } });
+    await waitFor(() => expect(slot.queryByText("Deploy runbook")).toBeNull());
+
+    const search = slot.getByRole("search");
+    fireEvent.click(
+      within(search).getByRole("button", { name: "Clear search" }),
+    );
+
+    expect(searchBox(slot)).toHaveProperty("value", "");
+    expect(document.activeElement).toBe(searchBox(slot));
+    expect(await slot.findByText("Deploy runbook")).toBeTruthy();
   });
 
   it("explains an empty result and clears the search from it", async () => {
