@@ -2,7 +2,7 @@ Turn a plan into tracked tasks, hand each task to an agent, and see the worker's
 
 ## What you get
 
-- A **Tasks** panel with list and board views, filters, and a detail page for each task.
+- A **Tasks** panel with list and board views, filters, list search, and a detail page for each task.
 - Projects with key prefixes such as `PROD-1`, nested folders, labels, priorities, due dates, subtasks, and file attachments.
 - Markdown comments with a **Notify last responding agent** switch. The comment goes to the worker thread and resumes it when idle.
 - A **Delegate** menu that starts a worker thread from a preset. A preset sets the provider, model, reasoning level, permission mode, and instructions.

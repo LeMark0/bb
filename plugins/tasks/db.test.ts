@@ -395,6 +395,7 @@ describe("tasks storage", () => {
 
       expect(matchingKeys("deployment readiness")).toEqual([matching.key]);
       expect(matchingKeys("readiness deployment")).toEqual([matching.key]);
+      expect(matchingKeys(matching.key.toLowerCase())).toEqual([matching.key]);
     } finally {
       await harness.dispose();
     }
