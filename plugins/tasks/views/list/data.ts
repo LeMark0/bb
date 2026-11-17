@@ -24,6 +24,7 @@ interface ListTaskFilters {
   statuses: readonly TaskStatus[];
   priorities: readonly TaskPriority[];
   labelIds: readonly string[] | null;
+  search: string;
 }
 
 export interface TaskEdit {
@@ -68,6 +69,9 @@ export function listTasksQuery(
       ? { priorities: [...filters.priorities] }
       : {}),
     ...(filters.labelIds !== null ? { labelIds: [...filters.labelIds] } : {}),
+    ...(filters.search.trim().length > 0
+      ? { search: filters.search.trim() }
+      : {}),
     activeOnly,
     parentTaskId: null,
   };

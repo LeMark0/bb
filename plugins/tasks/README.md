@@ -98,6 +98,13 @@ machine; pass `--machine <id-or-name>` to target another enrolled machine.
 | `bb tasks label create\|list\|delete`          | Manage project-scoped labels.                                                                                                              |
 | `bb tasks seed-demo --yes`                     | Create sample folders, projects, labels, tasks, and comments for evaluation.                                                               |
 
+The list view's search field runs the same search as `bb tasks list --search`
+over every task in the current list, not only the rows on screen. It matches
+each word against the title, description, or task key, such as `prod-1`, and
+applies the status, priority, and label filters too. Escape clears the field.
+Each list keeps its own search while you open tasks and come back, until the
+browser session ends; filters and sort persist longer.
+
 Statuses are `backlog`, `todo`, `in_progress`, `in_review`, `done`, and
 `canceled`. Priorities are `urgent`, `high`, `medium`, `low`, and `none`.
 
@@ -159,7 +166,7 @@ Tasks skill, which directs the worker to read and update the tracked task.
 ## Known limitations
 
 - The **Auto** delegation preset is deferred; choose an explicit preset.
-- List filters are local UI state and are not persisted in the URL.
+- List filters and search are local UI state and are not persisted in the URL.
 
 ## Fast follow
 

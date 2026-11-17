@@ -30,6 +30,12 @@ import {
   storeListPreference,
   type ListPreference,
 } from "./list-preference.js";
+import {
+  loadListSearch,
+  matchesSearch,
+  searchTerms,
+  storeListSearch,
+} from "./list-search.js";
 import { sortTasks } from "../../shared/sort.js";
 import type { TaskSort } from "../../shared/pagination.js";
 import { StatusIcon } from "./icons.js";
@@ -47,6 +53,16 @@ import { TaskRow } from "./row.js";
 import { rowWindows, useRowWindowViewport } from "./row-window.js";
 
 const NO_LABELS: readonly Label[] = [];
+const SEARCH_DEBOUNCE_MS = 200;
+const SEARCH_TITLE_MAX_LENGTH = 60;
+
+function searchTitle(search: string): string {
+  const shown =
+    search.length > SEARCH_TITLE_MAX_LENGTH
+      ? `${search.slice(0, SEARCH_TITLE_MAX_LENGTH)}…`
+      : search;
+  return `No tasks match “${shown}”`;
+}
 
 interface ListViewProps {
   projectId: string | null;
@@ -106,6 +122,33 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
       return updated;
     });
   };
+  const [searchInput, setSearchInput] = useState(() =>
+    loadListSearch(preferenceScope),
+  );
+  const [appliedSearch, setAppliedSearch] = useState(() => searchInput.trim());
+  const [searchScope, setSearchScope] = useState(preferenceScope);
+  if (searchScope !== preferenceScope) {
+    const stored = loadListSearch(preferenceScope);
+    setSearchScope(preferenceScope);
+    setSearchInput(stored);
+    setAppliedSearch(stored.trim());
+  }
+  useEffect(() => {
+    const next = searchInput.trim();
+    if (next === appliedSearch || next.length === 0) return;
+    const timer = window.setTimeout(
+      () => setAppliedSearch(next),
+      SEARCH_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [searchInput, appliedSearch]);
+  const setSearch = (next: string) => {
+    setSearchInput(next);
+    if (next.trim().length === 0) setAppliedSearch("");
+    storeListSearch(preferenceScope, next);
+  };
+  const terms = useMemo(() => searchTerms(searchInput), [searchInput]);
+  const searching = terms.length > 0;
   const [newTaskOpen, setNewTaskOpen] = useState(false);
 
   const labelProjectIds = useMemo(
@@ -130,7 +173,10 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
     statuses: filters.statuses,
     priorities: filters.priorities,
     labelIds,
+    search: appliedSearch,
   });
+  const searchPending =
+    searchInput.trim() !== appliedSearch || tasksQuery.isLoading;
   const meta = useTaskListMeta(projectId);
   const taskEdit = useListTaskEdit(tasksQuery.reads);
   const { mutate: mutateTask } = taskEdit;
@@ -190,15 +236,16 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
 
   const displayTasks = useMemo(() => {
     if (tasksQuery.data === undefined) return undefined;
-    return tasksQuery.data.filter((task) =>
-      matchesFilters(
-        task,
-        filters.statuses,
-        filters.priorities,
-        labelIds ?? [],
-      ),
+    return tasksQuery.data.filter(
+      (task) =>
+        matchesFilters(
+          task,
+          filters.statuses,
+          filters.priorities,
+          labelIds ?? [],
+        ) && matchesSearch(task, terms),
     );
-  }, [tasksQuery.data, filters.statuses, filters.priorities, labelIds]);
+  }, [tasksQuery.data, filters.statuses, filters.priorities, labelIds, terms]);
   const groups = useMemo(
     () => groupTasksByStatus(sortTasks(displayTasks ?? [], sort)),
     [displayTasks, sort],
@@ -208,7 +255,13 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
   const filtered = hasActiveFilters(filters);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const scopeKey = listScrollScopeKey({ projectId, activeOnly, filters, sort });
+  const scopeKey = listScrollScopeKey({
+    projectId,
+    activeOnly,
+    filters,
+    sort,
+    search: appliedSearch,
+  });
   const settledScope = useRef(scopeKey);
   const scopeChanged = settledScope.current !== scopeKey;
   useEffect(() => {
@@ -242,7 +295,37 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
         <LoadingRows />
       );
   } else if (displayTasks.length === 0) {
-    if (filtered) {
+    if (searching && searchPending) {
+      body = <LoadingRows />;
+    } else if (searching) {
+      body = (
+        <EmptyState
+          icon="Search"
+          title={searchTitle(searchInput.trim())}
+          description={
+            filtered
+              ? "Search only covers tasks that match the filters."
+              : undefined
+          }
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+              {filtered ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFilters(EMPTY_FILTERS)}
+                >
+                  Clear filters
+                </Button>
+              ) : null}
+            </div>
+          }
+        />
+      );
+    } else if (filtered) {
       body = (
         <EmptyState
           icon="Search"
@@ -328,12 +411,18 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ListFilterBar
+        search={searchInput}
+        onSearchChange={setSearch}
         filters={filters}
         onChange={setFilters}
         sort={sort}
         onSortChange={setSort}
         labelOptions={labelOptions}
-        taskCount={displayTasks?.length}
+        taskCount={
+          searching && searchPending && displayTasks?.length === 0
+            ? undefined
+            : displayTasks?.length
+        }
       />
       <div
         ref={scrollRef}

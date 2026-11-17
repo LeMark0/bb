@@ -17,6 +17,7 @@ describe("listScrollScopeKey", () => {
     activeOnly: false,
     filters: EMPTY_FILTERS,
     sort: "manual" as const,
+    search: "",
   };
 
   it("distinguishes the all/active/project lists", () => {
@@ -64,6 +65,12 @@ describe("listScrollScopeKey", () => {
   it("distinguishes sort while holding the list fixed", () => {
     expect(listScrollScopeKey(base)).not.toBe(
       listScrollScopeKey({ ...base, sort: "priority" }),
+    );
+  });
+
+  it("keeps a search's scroll offset apart from the unsearched list", () => {
+    expect(listScrollScopeKey(base)).not.toBe(
+      listScrollScopeKey({ ...base, search: "deploy" }),
     );
   });
 });
