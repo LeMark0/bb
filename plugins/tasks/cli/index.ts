@@ -1370,7 +1370,8 @@ export function registerTasksCli(
               type: "enum",
               values: TASK_SORTS,
               default: "manual",
-              description: "Row order",
+              description:
+                "Row order; created and updated list the newest tasks first",
             },
             limit: {
               type: "integer",

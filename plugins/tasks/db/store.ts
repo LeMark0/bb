@@ -5,6 +5,7 @@ import { initializeTasksSchema } from "./schema";
 import {
   TASKS_PAGE_DEFAULT_LIMIT,
   TASKS_PAGE_MAX_LIMIT,
+  TASK_SORTS,
   type TaskSort,
 } from "../shared/pagination.js";
 import {
@@ -97,6 +98,8 @@ interface TaskPageRow extends TaskRow {
   cursor_project_id: string;
   cursor_status: string;
   cursor_position: number;
+  cursor_created_at: string;
+  cursor_updated_at: string;
   cursor_id: string;
 }
 
@@ -173,7 +176,7 @@ const taskCursorSchema = z
     version: z.literal(1),
     revision: z.number().int().nonnegative(),
     query: z.string().length(43),
-    sort: z.enum(["manual", "priority", "due"]),
+    sort: z.enum(TASK_SORTS),
     key: z
       .object({
         priority: z.number().int().min(0).max(5),
@@ -182,6 +185,8 @@ const taskCursorSchema = z
         projectId: z.string(),
         status: z.string(),
         position: z.number().finite(),
+        createdAt: z.string().optional(),
+        updatedAt: z.string().optional(),
         id: z.string(),
       })
       .strict(),
@@ -189,6 +194,34 @@ const taskCursorSchema = z
   .strict();
 
 type TaskCursor = z.infer<typeof taskCursorSchema>;
+
+const MANUAL_PAGE_KEYS =
+  "cursor_project_id, cursor_status, cursor_position, cursor_id";
+const MANUAL_PAGE_CURSOR =
+  "@cursorProjectId, @cursorStatus, @cursorPosition, @cursorId";
+
+const TASK_PAGE_ORDER: Record<TaskSort, { orderBy: string; after: string }> = {
+  manual: {
+    orderBy: MANUAL_PAGE_KEYS,
+    after: `(${MANUAL_PAGE_KEYS}) > (${MANUAL_PAGE_CURSOR})`,
+  },
+  priority: {
+    orderBy: `cursor_priority, cursor_due_null, cursor_due_date, ${MANUAL_PAGE_KEYS}`,
+    after: `(cursor_priority, cursor_due_null, cursor_due_date, ${MANUAL_PAGE_KEYS}) > (@cursorPriority, @cursorDueNull, @cursorDueDate, ${MANUAL_PAGE_CURSOR})`,
+  },
+  due: {
+    orderBy: `cursor_due_null, cursor_due_date, cursor_priority, ${MANUAL_PAGE_KEYS}`,
+    after: `(cursor_due_null, cursor_due_date, cursor_priority, ${MANUAL_PAGE_KEYS}) > (@cursorDueNull, @cursorDueDate, @cursorPriority, ${MANUAL_PAGE_CURSOR})`,
+  },
+  created: {
+    orderBy: "cursor_created_at DESC, cursor_id DESC",
+    after: "(cursor_created_at, cursor_id) < (@cursorCreatedAt, @cursorId)",
+  },
+  updated: {
+    orderBy: "cursor_updated_at DESC, cursor_id DESC",
+    after: "(cursor_updated_at, cursor_id) < (@cursorUpdatedAt, @cursorId)",
+  },
+};
 
 export class TasksPageCursorError extends Error {
   constructor(
@@ -953,20 +986,19 @@ export function createTasksStore(db: PluginDatabase) {
       );
     }
 
-    const orderBy =
-      sort === "manual"
-        ? "cursor_project_id, cursor_status, cursor_position, cursor_id"
-        : sort === "priority"
-          ? "cursor_priority, cursor_due_null, cursor_due_date, cursor_project_id, cursor_status, cursor_position, cursor_id"
-          : "cursor_due_null, cursor_due_date, cursor_priority, cursor_project_id, cursor_status, cursor_position, cursor_id";
-    const cursorWhere =
-      cursor === null
-        ? ""
-        : sort === "manual"
-          ? "WHERE (cursor_project_id, cursor_status, cursor_position, cursor_id) > (@cursorProjectId, @cursorStatus, @cursorPosition, @cursorId)"
-          : sort === "priority"
-            ? "WHERE (cursor_priority, cursor_due_null, cursor_due_date, cursor_project_id, cursor_status, cursor_position, cursor_id) > (@cursorPriority, @cursorDueNull, @cursorDueDate, @cursorProjectId, @cursorStatus, @cursorPosition, @cursorId)"
-            : "WHERE (cursor_due_null, cursor_due_date, cursor_priority, cursor_project_id, cursor_status, cursor_position, cursor_id) > (@cursorDueNull, @cursorDueDate, @cursorPriority, @cursorProjectId, @cursorStatus, @cursorPosition, @cursorId)";
+    if (
+      cursor !== null &&
+      ((sort === "created" && cursor.key.createdAt === undefined) ||
+        (sort === "updated" && cursor.key.updatedAt === undefined))
+    ) {
+      throw new TasksPageCursorError(
+        "invalid_cursor",
+        "invalid task-list cursor; start again without --cursor",
+      );
+    }
+
+    const { orderBy, after } = TASK_PAGE_ORDER[sort];
+    const cursorWhere = cursor === null ? "" : `WHERE ${after}`;
     if (cursor !== null) {
       parameters.cursorPriority = cursor.key.priority;
       parameters.cursorDueNull = cursor.key.dueNull;
@@ -974,6 +1006,12 @@ export function createTasksStore(db: PluginDatabase) {
       parameters.cursorProjectId = cursor.key.projectId;
       parameters.cursorStatus = cursor.key.status;
       parameters.cursorPosition = cursor.key.position;
+      if (cursor.key.createdAt !== undefined) {
+        parameters.cursorCreatedAt = cursor.key.createdAt;
+      }
+      if (cursor.key.updatedAt !== undefined) {
+        parameters.cursorUpdatedAt = cursor.key.updatedAt;
+      }
       parameters.cursorId = cursor.key.id;
     }
     parameters.pageLimit = limit + 1;
@@ -1016,6 +1054,8 @@ export function createTasksStore(db: PluginDatabase) {
                 t.project_id AS cursor_project_id,
                 t.status AS cursor_status,
                 t.position AS cursor_position,
+                t.created_at AS cursor_created_at,
+                t.updated_at AS cursor_updated_at,
                 t.id AS cursor_id
               FROM tasks t
               JOIN projects p ON p.id = t.project_id
@@ -1048,6 +1088,12 @@ export function createTasksStore(db: PluginDatabase) {
                   projectId: last.cursor_project_id,
                   status: last.cursor_status,
                   position: last.cursor_position,
+                  ...(sort === "created"
+                    ? { createdAt: last.cursor_created_at }
+                    : {}),
+                  ...(sort === "updated"
+                    ? { updatedAt: last.cursor_updated_at }
+                    : {}),
                   id: last.cursor_id,
                 },
               })
