@@ -106,6 +106,8 @@ export interface EventProjectionUserMessage extends EventProjectionMessageBase {
   systemMessageKind: SystemMessageKind;
   systemMessageSubject: SystemMessageSubject | null;
   turnRequest: EventProjectionTurnRequest;
+  progressNote?: true;
+  acceptedTurnId?: string;
   text: string;
   mentions: PromptTextMention[];
   attachments?: {

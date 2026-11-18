@@ -98,6 +98,13 @@ Inspecting:
     --message <seq>                        Print one message
     --context <count>                      With --message, also print this many messages around it (max 20)
 
+  In minimal and verbose output of a whole thread log (not --message), a user
+  message whose turn published a plan shows that plan under it as
+  "Plan (N of M done)" with [x] done, [>] in progress, [!] failed and [ ] open
+  steps; after the turn ends with steps open it adds "turn ended", "stopped" or
+  "turn failed". --json prints raw events; the same plan is the `requestPlan`
+  field of user rows in the SDK timeline.
+
   Human formats end with a notice when older history was omitted; --json warns
   on stderr when more events exist beyond the printed page. Human-format --all
   walks a consistent history snapshot and joins paginated group contents.

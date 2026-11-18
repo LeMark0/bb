@@ -95,6 +95,7 @@ import {
 import { WorkRowBody } from "./TimelineRowDetails.js";
 import { TimelineDetailScroll } from "./TimelineDetailScroll.js";
 import { Button } from "@bb/shared-ui/button";
+import { RequestPlanChecklist } from "./RequestPlanChecklist";
 import { Icon, type IconName } from "@bb/shared-ui/icon";
 import { presentationTintStyle } from "./presentation-display.js";
 import { usePluginIconUrl } from "@/lib/plugin-logos";
@@ -1016,6 +1017,9 @@ const ConversationRowContent = memo(function ConversationRowContent({
           threadId={row.threadId}
           turnRequest={row.turnRequest}
         />
+        {row.requestPlan === undefined ? null : (
+          <RequestPlanChecklist plan={row.requestPlan} />
+        )}
       </>
     );
   }

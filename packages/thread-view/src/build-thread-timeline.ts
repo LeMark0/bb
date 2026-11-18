@@ -6,6 +6,7 @@ import type {
   TimelineConversationAttachments,
   TimelineFileChange,
   TimelineParentChange,
+  TimelineRequestPlan,
   TimelineRow,
   TimelineRowBase,
   TimelineRowStatus,
@@ -62,6 +63,7 @@ import {
 } from "./user-message-parsing.js";
 import { getOrderedThreadEvents } from "./group-event-projection-turns.js";
 import { planTimelineRows, type TimelineRowPlan } from "./timeline-row-plan.js";
+import { collectRequestPlans } from "./request-plan.js";
 import { extractThreadContextWindowUsage } from "./thread-context-window-usage.js";
 import {
   extractThreadTimelineActivePromptMode,
@@ -1163,11 +1165,29 @@ function materializeTimelineMessages(
   return rows;
 }
 
+function withRequestPlan(
+  rows: TimelineSourceRow[],
+  requestPlan: TimelineRequestPlan | undefined,
+): TimelineSourceRow[] {
+  if (requestPlan === undefined) return rows;
+  return rows.map((row) =>
+    row.kind === "conversation" && row.role === "user"
+      ? { ...row, requestPlan }
+      : row,
+  );
+}
+
 function materializeTimelinePlan(
   item: TimelineRowPlan,
   options: BuildTimelineRowsOptions,
+  requestPlans: ReadonlyMap<EventProjectionMessage, TimelineRequestPlan>,
 ): TimelineRow[] {
-  if (item.kind === "message") return convertMessage(item.message, options);
+  if (item.kind === "message") {
+    return withRequestPlan(
+      convertMessage(item.message, options),
+      requestPlans.get(item.message),
+    );
+  }
   return [
     options.includeNestedRows
       ? {
@@ -1183,12 +1203,13 @@ function buildTimelineRows(
   options: BuildTimelineRowsOptions,
 ): TimelineRow[] {
   const rows: TimelineRow[] = [];
+  const requestPlans = collectRequestPlans(projection);
   for (const item of planTimelineRows(
     projection,
     options.completedTurnDisplay,
     options.rowIdPrefix,
   )) {
-    appendRows(rows, materializeTimelinePlan(item, options));
+    appendRows(rows, materializeTimelinePlan(item, options, requestPlans));
   }
 
   return orderRowsAfterExternalUserBoundary(
