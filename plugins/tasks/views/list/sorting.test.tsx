@@ -53,6 +53,8 @@ function task(
   status: Task["status"],
   priority: Task["priority"],
   dueDate: string | null,
+  createdAt: string,
+  updatedAt: string,
 ): Task {
   return makeTask({
     id: `01HZZZZZZZZZZZZZZZZZZZZZT${number}`,
@@ -64,14 +66,17 @@ function task(
     priority,
     dueDate,
     position: number,
+    createdAt: `${createdAt}T09:00:00.000Z`,
+    updatedAt: `${updatedAt}T09:00:00.000Z`,
   });
 }
 
 const tasks = [
-  task(1, "todo", "none", "2026-07-20"),
-  task(2, "todo", "urgent", null),
-  task(3, "done", "low", null),
-  task(4, "done", "high", "2026-07-18"),
+  task(1, "todo", "none", "2026-07-20", "2026-07-10", "2026-07-14"),
+  task(2, "todo", "urgent", null, "2026-07-12", "2026-07-17"),
+  task(3, "done", "low", null, "2026-07-11", "2026-07-13"),
+  task(4, "done", "high", "2026-07-18", "2026-07-09", "2026-07-16"),
+  task(5, "todo", "low", "2026-07-25", "2026-07-13", "2026-07-13"),
 ];
 
 function renderList() {
@@ -116,12 +121,19 @@ async function selectSort(slot: ReturnType<typeof renderList>, label: string) {
 describe("list sorting (compact viewport)", () => {
   it("renders manual order, then reorders within status groups", async () => {
     const slot = renderList();
-    expect(await rowOrder(slot)).toEqual(["TSK-1", "TSK-2", "TSK-3", "TSK-4"]);
+    expect(await rowOrder(slot)).toEqual([
+      "TSK-1",
+      "TSK-2",
+      "TSK-5",
+      "TSK-3",
+      "TSK-4",
+    ]);
 
     await selectSort(slot, "Priority");
     await waitFor(async () =>
       expect(await rowOrder(slot)).toEqual([
         "TSK-2",
+        "TSK-5",
         "TSK-1",
         "TSK-4",
         "TSK-3",
@@ -132,11 +144,59 @@ describe("list sorting (compact viewport)", () => {
     await waitFor(async () =>
       expect(await rowOrder(slot)).toEqual([
         "TSK-1",
+        "TSK-5",
         "TSK-2",
         "TSK-4",
         "TSK-3",
       ]),
     );
+
+    await selectSort(slot, "Created date");
+    await waitFor(async () =>
+      expect(await rowOrder(slot)).toEqual([
+        "TSK-5",
+        "TSK-2",
+        "TSK-1",
+        "TSK-3",
+        "TSK-4",
+      ]),
+    );
+
+    await selectSort(slot, "Last updated");
+    await waitFor(async () =>
+      expect(await rowOrder(slot)).toEqual([
+        "TSK-2",
+        "TSK-1",
+        "TSK-5",
+        "TSK-4",
+        "TSK-3",
+      ]),
+    );
+  });
+
+  it("keeps the Last updated choice and order after the list remounts", async () => {
+    const slot = renderList();
+    await selectSort(slot, "Last updated");
+    await waitFor(() =>
+      expect(slot.getByRole("button", { name: /Sort/ }).textContent).toContain(
+        "Last updated",
+      ),
+    );
+    slot.lifecycle.unmount();
+
+    const remounted = renderList();
+    await waitFor(async () =>
+      expect(await rowOrder(remounted)).toEqual([
+        "TSK-2",
+        "TSK-1",
+        "TSK-5",
+        "TSK-4",
+        "TSK-3",
+      ]),
+    );
+    expect(
+      remounted.getByRole("button", { name: /Sort/ }).textContent,
+    ).toContain("Last updated");
   });
 
   it("offers every sort mode in the compact drawer and marks the active one", async () => {
@@ -150,10 +210,12 @@ describe("list sorting (compact viewport)", () => {
       "Manual",
       "Priority",
       "Due date",
+      "Created date",
+      "Last updated",
     ]);
     expect(
       options.map((option) => option.getAttribute("aria-checked")),
-    ).toEqual(["true", "false", "false"]);
+    ).toEqual(["true", "false", "false", "false", "false"]);
 
     fireEvent.click(
       await within(drawer).findByRole("menuitemcheckbox", {

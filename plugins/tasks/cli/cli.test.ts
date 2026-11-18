@@ -612,10 +612,98 @@ describe("bb tasks CLI", () => {
     const invalid = await harness.runCli(["list", "--sort", "sideways"]);
     expect(invalid.exitCode).not.toBe(0);
     expect(invalid.stderr).toContain(
-      "invalid value 'sideways' for --sort. Expected one of: manual, priority, due",
+      "invalid value 'sideways' for --sort. Expected one of: manual, priority, due, created, updated",
     );
 
     await harness.dispose();
+  });
+
+  it("lists created and updated sorts newest first through paged CLI reads", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+    try {
+      await plugin(bb);
+      const at = (time: string) =>
+        vi.setSystemTime(new Date(`2026-08-01T${time}.000Z`));
+      at("09:00:00");
+      stdout(
+        await harness.runCli([
+          "project",
+          "create",
+          "--name",
+          "Dated",
+          "--prefix",
+          "DAT",
+          "--json",
+        ]),
+      );
+      for (const [time, title] of [
+        ["09:01:00", "First"],
+        ["09:01:00", "Second"],
+        ["09:02:00", "Third"],
+      ] as const) {
+        at(time);
+        stdout(
+          await harness.runCli([
+            "create",
+            "--project",
+            "DAT",
+            "--title",
+            title,
+            "--json",
+          ]),
+        );
+      }
+      at("09:03:00");
+      stdout(
+        await harness.runCli([
+          "update",
+          "DAT-1",
+          "--priority",
+          "high",
+          "--json",
+        ]),
+      );
+
+      const pagedTitles = async (sort: "created" | "updated") => {
+        const titles: string[] = [];
+        let cursor: string | null = null;
+        do {
+          const page = JSON.parse(
+            stdout(
+              await harness.runCli([
+                "list",
+                "--project",
+                "DAT",
+                "--sort",
+                sort,
+                "--limit",
+                "1",
+                ...(cursor === null ? [] : ["--cursor", cursor]),
+                "--json",
+              ]),
+            ),
+          ) as { tasks: Array<{ title: string }>; nextCursor: string | null };
+          titles.push(...page.tasks.map((task) => task.title));
+          cursor = page.nextCursor;
+        } while (cursor !== null);
+        return titles;
+      };
+
+      expect(await pagedTitles("created")).toEqual([
+        "Third",
+        "Second",
+        "First",
+      ]);
+      expect(await pagedTitles("updated")).toEqual([
+        "First",
+        "Third",
+        "Second",
+      ]);
+    } finally {
+      vi.useRealTimers();
+      await harness.dispose();
+    }
   });
 
   it("traverses a project whose former single JSON response exceeds 64 KiB", async () => {

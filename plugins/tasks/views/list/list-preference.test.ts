@@ -89,6 +89,12 @@ describe("sanitizeListPreference", () => {
       sort: "due",
     });
   });
+
+  it("keeps the date sort modes and drops unknown ones", () => {
+    expect(sanitizeListPreference({ sort: "created" }).sort).toBe("created");
+    expect(sanitizeListPreference({ sort: "updated" }).sort).toBe("updated");
+    expect(sanitizeListPreference({ sort: "newest" }).sort).toBe("manual");
+  });
 });
 
 describe("loadListPreference / storeListPreference", () => {

@@ -28,6 +28,8 @@ export const SORT_LABELS: Record<TaskSort, string> = {
   manual: "Manual",
   priority: "Priority",
   due: "Due date",
+  created: "Created date",
+  updated: "Last updated",
 };
 
 interface StatusGroup {
