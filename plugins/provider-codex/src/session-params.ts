@@ -635,14 +635,14 @@ export function buildCodexConfig(
   args: BuildCodexConfigArgs,
 ): { [key in string]?: JsonValue } | undefined {
   const config: { [key in string]?: JsonValue } = {};
-  if (args.threadId) {
-    config["shell_environment_policy.set.BB_THREAD_ID"] = args.threadId;
-  }
   const shellEnvironmentConfig = buildShellEnvironmentPolicyConfig(
     args.options?.envVars,
   );
   if (shellEnvironmentConfig) {
     Object.assign(config, shellEnvironmentConfig);
+  }
+  if (args.threadId) {
+    config["shell_environment_policy.set.BB_THREAD_ID"] = args.threadId;
   }
   if (args.options?.reasoningLevel) {
     config["model_reasoning_effort"] = toCodexReasoningEffort(
