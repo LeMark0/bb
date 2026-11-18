@@ -38,6 +38,7 @@ import type {
   ThreadEventType,
   ThreadOriginKind,
   ThreadStatus,
+  ThreadParentNotifications,
   ThreadVisibility,
 } from "@bb/domain";
 import type { AppDeps } from "../../src/types.js";
@@ -212,6 +213,7 @@ export function seedThread(
     originPluginId?: string | null;
     titleFallback?: string | null;
     visibility?: ThreadVisibility;
+    parentNotifications?: ThreadParentNotifications;
   },
 ) {
   return createThread(deps.db, deps.hub, {
@@ -227,6 +229,7 @@ export function seedThread(
     originKind: args.originKind ?? null,
     originPluginId: args.originPluginId ?? null,
     visibility: args.visibility ?? "visible",
+    parentNotifications: args.parentNotifications ?? "auto",
   });
 }
 
@@ -269,7 +272,6 @@ export function seedQueuedMessage(
     permissionMode?: PermissionMode;
     senderThreadId?: string | null;
     serviceTier?: string;
-    /** Defaults to a row with no wait: an ordinary queued message. */
     waitingOn?: QueuedMessageWaitingOn | null;
     sendAt?: number | null;
   },

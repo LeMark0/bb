@@ -75,6 +75,27 @@ describe("provider declaration target-state fields", () => {
     expect(Object.isFrozen(normalized.serviceTiers)).toBe(true);
   });
 
+  it.each([
+    ["Zap", "Zap"],
+    ["provider-codex/ultrafast", "provider-codex/ultrafast"],
+    ["./icons/ultrafast.svg", null],
+    ["icons/ultrafast.svg", null],
+  ])("validates %s as a service tier icon", (icon, expected) => {
+    const validate = () =>
+      validatePluginProviderDeclaration(
+        declaration({
+          serviceTiers: [
+            { id: "fast", label: "Fast", experimental_icon: icon },
+          ],
+        }),
+      );
+    if (expected === null) {
+      expect(validate).toThrow(/experimental_icon must be a host glyph name/u);
+    } else {
+      expect(validate().serviceTiers?.[0]?.experimental_icon).toBe(expected);
+    }
+  });
+
   it("omits the fields entirely when a plugin does not declare them", () => {
     const normalized = validatePluginProviderDeclaration(declaration());
     expect("strings" in normalized).toBe(false);
@@ -350,6 +371,23 @@ describe("provider declaration fields renamed in SDK 0.4.16", () => {
     expect(() => validatePluginProviderDeclaration(stale)).toThrow(
       `provider "my-agent": "${oldKey}" was renamed to "${newKey}" in SDK 0.4.16`,
     );
+  });
+
+  it("fills guided sign-in as false and refuses a non-boolean", () => {
+    expect(
+      validatePluginProviderDeclaration(declaration())
+        .internal_DO_NOT_USE_guidedSignIn,
+    ).toBe(false);
+    expect(
+      validatePluginProviderDeclaration(
+        declaration({ internal_DO_NOT_USE_guidedSignIn: true }),
+      ).internal_DO_NOT_USE_guidedSignIn,
+    ).toBe(true);
+    expect(() =>
+      validatePluginProviderDeclaration(
+        declaration({ internal_DO_NOT_USE_guidedSignIn: "yes" as never }),
+      ),
+    ).toThrow(/internal_DO_NOT_USE_guidedSignIn must be a boolean/u);
   });
 
   it("rejects an experimental_ key it has never read as unknown", () => {

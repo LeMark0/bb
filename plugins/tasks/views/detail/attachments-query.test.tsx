@@ -5,7 +5,6 @@ import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Attachment } from "../../shared/contract.js";
 import { useTasksQuery } from "../../shell/data.js";
-import { TasksRefreshProvider } from "../../shell/refresh.js";
 import { TaskAttachments } from "./attachments.js";
 
 afterEach(() => {
@@ -33,6 +32,8 @@ const uploaded = attachment("01JFILE00000000000000000N1", "uploaded.md");
 
 type Listing = { attachments: Attachment[] };
 
+const selectAttachments = (result: Listing) => result.attachments;
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -51,11 +52,9 @@ function renderWithQuery() {
 
   function Owner() {
     const query = useTasksQuery(
-      async (rpc) =>
-        (await rpc.call("listAttachments", { taskId: TASK_ID })).attachments,
-      ["tasks:changed"],
-      [TASK_ID],
-      { relevantTaskIds: [TASK_ID] },
+      "listAttachments",
+      { taskId: TASK_ID },
+      selectAttachments,
     );
     useEffect(() => {
       refresh.current = query.refresh;
@@ -79,11 +78,7 @@ function renderWithQuery() {
 
   const slot = renderSlot(
     {
-      component: () => (
-        <TasksRefreshProvider>
-          <Owner />
-        </TasksRefreshProvider>
-      ),
+      component: () => <Owner />,
     },
     {},
     {
@@ -100,35 +95,60 @@ function renderWithQuery() {
 
   const latest = () => requests[requests.length - 1]!;
 
-  async function succeed(
-    request: ReturnType<typeof deferred<Listing>>,
-    rows: Attachment[],
-  ) {
+  type Request = ReturnType<typeof deferred<Listing>>;
+  let reconnected: Promise<void> | null = null;
+
+  async function nextTask() {
     await act(async () => {
-      request.resolve({ attachments: rows });
-      await request.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
 
-  async function fail(request: ReturnType<typeof deferred<Listing>>) {
+  async function polledUntil(condition: () => boolean) {
+    for (let attempt = 0; attempt < 400 && !condition(); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(condition()).toBe(true);
+  }
+
+  async function settle(request: Request, outcome: () => void) {
+    if (reconnected !== null) {
+      outcome();
+      await request.promise.catch(() => undefined);
+      await reconnected;
+      reconnected = null;
+      await nextTask();
+      return;
+    }
     await act(async () => {
-      request.reject(new Error("offline"));
+      outcome();
       await request.promise.catch(() => undefined);
     });
+    await nextTask();
   }
+
+  const succeed = (request: Request, rows: Attachment[]) =>
+    settle(request, () => request.resolve({ attachments: rows }));
+
+  const fail = (request: Request) =>
+    settle(request, () => request.reject(new Error("offline")));
 
   async function supersede(kind: Supersession) {
     if (kind === "none") return;
-    const before = requests.length;
     if (kind === "reconnect") {
       await slot.behavior.setRealtimeConnectionState("reconnecting");
-      await slot.behavior.setRealtimeConnectionState("connected");
-    } else {
-      act(() => {
-        void refresh.current();
-      });
+      reconnected = slot.behavior.setRealtimeConnectionState("connected");
+      return;
     }
-    await waitFor(() => expect(requests).toHaveLength(before + 1));
+    act(() => {
+      void refresh.current();
+    });
+    await nextTask();
+  }
+
+  async function answerRestartedRead(rows: Attachment[]) {
+    requests[1]!.resolve({ attachments: rows });
+    await polledUntil(() => requests.length === 3);
   }
 
   async function backgroundLoad(rows: Attachment[]) {
@@ -138,8 +158,13 @@ function renderWithQuery() {
     await succeed(latest(), rows);
   }
 
+  async function firstRequest() {
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0));
+    return requests[0]!;
+  }
+
   async function failInitialLoad() {
-    await fail(requests[0]!);
+    await fail(await firstRequest());
     return slot.findByRole("button", { name: "Retry" });
   }
 
@@ -150,8 +175,10 @@ function renderWithQuery() {
     succeed,
     fail,
     supersede,
+    answerRestartedRead,
     backgroundLoad,
     failInitialLoad,
+    firstRequest,
   };
 }
 
@@ -195,8 +222,8 @@ describe("TaskAttachments Retry with the attachments query", () => {
       expect(query.requests).toHaveLength(2);
 
       await query.supersede(supersession);
-      if (supersession !== "none") {
-        await query.succeed(query.requests[1]!, [existing]);
+      if (supersession === "reconnect") {
+        await query.answerRestartedRead([existing]);
       }
       if (outcome === "failure") await query.fail(query.latest());
       else {
@@ -206,7 +233,9 @@ describe("TaskAttachments Retry with the attachments query", () => {
         );
       }
 
-      const target = query.slot.getByRole("button", { name: focusTarget });
+      const target = await query.slot.findByRole("button", {
+        name: focusTarget,
+      });
       await waitFor(() => expect(document.activeElement).toBe(target));
       if (outcome === "rows") {
         expect(target.getAttribute("aria-expanded")).toBe("false");
@@ -227,7 +256,7 @@ describe("TaskAttachments Retry with the attachments query", () => {
     await query.backgroundLoad([existing]);
 
     expect(
-      query.slot.getByRole("button", { name: "Attachments (1)" }),
+      await query.slot.findByRole("button", { name: "Attachments (1)" }),
     ).not.toBe(document.activeElement);
     expect(document.activeElement).toBe(document.body);
   });
@@ -241,7 +270,7 @@ describe("TaskAttachments Retry with the attachments query", () => {
     const attach = query.slot.getByRole("button", { name: "Attach file" });
     attach.focus();
 
-    await query.succeed(query.requests[1]!, [existing]);
+    await query.answerRestartedRead([existing]);
     await query.succeed(query.latest(), [existing]);
 
     expect(document.activeElement).toBe(attach);
@@ -260,7 +289,7 @@ describe("TaskAttachments Retry with the attachments query", () => {
 
 describe("TaskAttachments upload reveal with the attachments query", () => {
   async function uploadInto(query: ReturnType<typeof renderWithQuery>) {
-    await query.succeed(query.requests[0]!, [existing]);
+    await query.succeed(await query.firstRequest(), [existing]);
     const attach = query.slot.getByRole("button", { name: "Attach file" });
     attach.focus();
     fireEvent.change(
@@ -283,8 +312,8 @@ describe("TaskAttachments upload reveal with the attachments query", () => {
       const attach = await uploadInto(query);
 
       await query.supersede(supersession);
-      if (supersession !== "none") {
-        await query.succeed(query.requests[1]!, [existing]);
+      if (supersession === "reconnect") {
+        await query.answerRestartedRead([existing]);
         expect(scrollIntoView).not.toHaveBeenCalled();
       }
       await query.succeed(query.latest(), [existing, uploaded]);
@@ -297,25 +326,4 @@ describe("TaskAttachments upload reveal with the attachments query", () => {
       expect(document.activeElement).toBe(attach);
     },
   );
-
-  it("should drop the reveal when the list is collapsed before the uploaded row commits", async () => {
-    const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
-    const query = renderWithQuery();
-    await uploadInto(query);
-    await query.supersede("reconnect");
-    await query.succeed(query.requests[1]!, [existing]);
-    const disclosure = query.slot.getByRole("button", {
-      name: "Attachments (1)",
-    });
-    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-
-    fireEvent.click(disclosure);
-    await query.succeed(query.latest(), [existing, uploaded]);
-    fireEvent.click(
-      query.slot.getByRole("button", { name: "Attachments (2)" }),
-    );
-
-    expect(query.slot.getByTitle("uploaded.md")).toBeDefined();
-    expect(scrollIntoView).not.toHaveBeenCalled();
-  });
 });

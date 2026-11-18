@@ -16,6 +16,7 @@ import {
 } from "./FilePreview";
 import { SOURCE_CODE_MAX_LINES } from "@/components/code/source-code-budget";
 import { SecondaryPanelFilePreview } from "./ThreadStorageFilePreview";
+import { FilePreviewRenderPreviewContext } from "./filePreviewRenderPreviewContext";
 import { CompactViewportOverrideProvider } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { HttpError } from "@/lib/api";
 import { BbHttpError } from "@bb/sdk/browser";
@@ -261,6 +262,10 @@ describe("FilePreview", () => {
         }}
       />,
     );
+
+    await act(async () => {
+      await import("@/components/code/BbSourceCode");
+    });
 
     await waitFor(() => expect(pierreMock.state.statsCallback).not.toBeNull());
     const renderCountBeforeStatsChange = Number(
@@ -520,6 +525,49 @@ describe("FilePreview", () => {
     expect(screen.queryByRole("button", { name: "Load full file" })).toBeNull();
   });
 
+  it("draws a supplied Preview body under BB's header and keeps Raw as BB's code view", async () => {
+    const renderPreview = vi.fn(({ content, url }) => (
+      <div data-testid="plugin-preview" data-url={url}>
+        {content}
+      </div>
+    ));
+    render(
+      <FilePreviewRenderPreviewContext.Provider value={renderPreview}>
+        <FilePreview
+          path="reports/page.html"
+          download={{
+            url: "/api/v1/threads/thr_1/thread-storage/files/reports/page.html",
+            fileName: "page.html",
+          }}
+          state={{
+            kind: "html",
+            file: { name: "page.html", contents: "<h1>Page</h1>" },
+            iframe: {
+              sandbox: "allow-scripts",
+              title: "reports/page.html",
+              url: "/api/v1/threads/thr_1/thread-storage/files/reports/page.html",
+            },
+            lineRange: null,
+          }}
+        />
+      </FilePreviewRenderPreviewContext.Provider>,
+    );
+
+    const body = screen.getByTestId("plugin-preview");
+    expect(body.textContent).toBe("<h1>Page</h1>");
+    expect(body.getAttribute("data-url")).toBe(
+      `${window.location.origin}/api/v1/threads/thr_1/thread-storage/files/reports/page.html`,
+    );
+    expect(document.querySelector("iframe")).toBeNull();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(screen.queryByText("Loading preview…")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    expect(screen.queryByTestId("plugin-preview")).toBeNull();
+    await screen.findByTestId("pierre-file");
+    expect(pierreMock.state.lastFile?.contents).toBe("<h1>Page</h1>");
+  });
+
   it("opens a rendered HTML preview in the external browser", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
@@ -579,6 +627,16 @@ describe("FilePreview", () => {
       screen.queryByRole("button", { name: "Copy HTML source" }),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Refresh file" })).toBeNull();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open in external browser" }),
+    );
+    expect(openSpy).toHaveBeenCalledWith(
+      `${window.location.origin}/gallery.html`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
     fireEvent.click(screen.getByRole("button", { name: "File actions" }));
     const refresh = await screen.findByRole("menuitem", {
       name: "Refresh file",
@@ -590,8 +648,8 @@ describe("FilePreview", () => {
       screen.getByRole("menuitem", { name: "Copy file path" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("menuitem", { name: "Open in external browser" }),
-    ).toBeTruthy();
+      screen.queryByRole("menuitem", { name: "Open in external browser" }),
+    ).toBeNull();
     expect(view.container.closest('[inert], [aria-hidden="true"]')).toBeNull();
     fireEvent.click(refresh);
     expect(onRefresh).toHaveBeenCalledOnce();
@@ -610,7 +668,9 @@ describe("FilePreview", () => {
     fireEvent.click(screen.getByRole("button", { name: "File actions" }));
     expect(
       (
-        await screen.findByRole("menuitemcheckbox", { name: "Wrap lines" })
+        await screen.findByRole("menuitemcheckbox", {
+          name: "Wrap lines",
+        })
       ).getAttribute("aria-checked"),
     ).toBe("true");
   });
@@ -726,12 +786,12 @@ describe("FilePreview", () => {
     await waitFor(() => {
       expect(
         screen
-          .getByRole("button", { name: "Disable line wrap" })
+          .getByRole("button", { name: "Wrap lines" })
           .getAttribute("aria-pressed"),
       ).toBe("true");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Disable line wrap" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wrap lines" }));
     expect(
       screen
         .getByRole("button", { name: "Wrap lines" })
@@ -1097,6 +1157,105 @@ describe("FilePreview", () => {
     expect(
       screen.getByRole("link", { name: "Download" }).getAttribute("href"),
     ).toBe("/api/v1/threads/thread-1/thread-storage/files/reports/huge.html");
+  });
+
+  it.each([
+    {
+      name: "README.md",
+      kind: "text",
+      content: "# Original\r\n",
+      mimeType: "text/markdown",
+    },
+    {
+      name: "package.json",
+      kind: "text",
+      content: '{"name":"original"}',
+      mimeType: "application/json",
+    },
+    {
+      name: "report.html",
+      kind: "text",
+      content: "<h1>Original</h1>",
+      mimeType: "text/html",
+    },
+    {
+      name: "data.csv",
+      kind: "text",
+      content: "name,value\nAda,1",
+      mimeType: "text/csv",
+    },
+    { name: "empty.txt", kind: "text", content: "", mimeType: "text/plain" },
+    { name: "image.png", kind: "image", mimeType: "image/png" },
+    { name: "video.mp4", kind: "video", mimeType: "video/mp4" },
+  ] as const)(
+    "downloads original $name from both header layouts",
+    async (file) => {
+      const path = `reports/${file.name}`;
+      const url = `/api/v1/threads/thread-1/worktree/files/${path}?ref=HEAD`;
+      const downloads: Array<{ href: string | null; name: string }> = [];
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, "click")
+        .mockImplementation(function (this: HTMLAnchorElement) {
+          downloads.push({
+            href: this.getAttribute("href"),
+            name: this.download,
+          });
+        });
+      try {
+        for (const compact of [false, true]) {
+          const view = render(
+            <CompactViewportOverrideProvider isCompactViewport={compact}>
+              <SecondaryPanelFilePreview
+                activePath={path}
+                filePreview={{ ...file, path, url }}
+                htmlPreviewUrl={file.name.endsWith(".html") ? url : null}
+                isLoading={false}
+              />
+            </CompactViewportOverrideProvider>,
+          );
+          if (compact) {
+            fireEvent.click(
+              screen.getByRole("button", { name: "File actions" }),
+            );
+            fireEvent.click(
+              await screen.findByRole("menuitem", { name: "Download" }),
+            );
+          } else {
+            fireEvent.click(screen.getByRole("button", { name: "Download" }));
+          }
+          expect(downloads.at(-1)).toEqual({ href: url, name: file.name });
+          view.unmount();
+        }
+        expect(downloads).toHaveLength(2);
+      } finally {
+        click.mockRestore();
+      }
+    },
+  );
+
+  it("hides Download when the loaded file no longer matches the active preview", () => {
+    const preview = (activePath: string, error?: Error) => (
+      <SecondaryPanelFilePreview
+        activePath={activePath}
+        error={error}
+        filePreview={{
+          kind: "text",
+          content: "old",
+          path: "old.txt",
+          mimeType: "text/plain",
+          url: "/files/old.txt",
+        }}
+        isLoading={false}
+      />
+    );
+    const view = render(preview("old.txt"));
+    expect(screen.getByRole("button", { name: "Download" })).toBeTruthy();
+    view.rerender(preview("new.txt"));
+    expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
+    view.rerender(
+      preview("old.txt", new HttpError({ status: 404, message: "Not found" })),
+    );
+    expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
   });
 
   it("links Download to the file's raw URL under its basename", () => {

@@ -1,8 +1,14 @@
 import type { ThreadRuntimeDisplayStatus } from "@bb/domain";
 import { assertNever } from "@bb/core-ui";
+import { modifierSubmitShortcutLabel } from "./modifier-submit-shortcut";
+
+type FollowUpPlaceholderState =
+  | ThreadRuntimeDisplayStatus
+  | "active-steers-on-enter"
+  | "active-queues-on-enter";
 
 export function getFollowUpPromptPlaceholder(
-  displayStatus: ThreadRuntimeDisplayStatus,
+  displayStatus: FollowUpPlaceholderState,
 ): string {
   switch (displayStatus) {
     case "provisioning":
@@ -13,6 +19,10 @@ export function getFollowUpPromptPlaceholder(
       return "Queue a message to run after the stop";
     case "waiting-for-host":
       return "Queue a message for when the host reconnects";
+    case "active-steers-on-enter":
+      return `Steer this run, or ${modifierSubmitShortcutLabel()} to queue a message for after it`;
+    case "active-queues-on-enter":
+      return "Queue a message for after this run";
     case "error":
       return "Retry by sending a follow-up message";
     case "pending":
@@ -25,7 +35,7 @@ export function getFollowUpPromptPlaceholder(
 }
 
 export function getCompactFollowUpPromptPlaceholder(
-  displayStatus: ThreadRuntimeDisplayStatus,
+  displayStatus: FollowUpPlaceholderState,
 ): string {
   switch (displayStatus) {
     case "provisioning":
@@ -36,6 +46,10 @@ export function getCompactFollowUpPromptPlaceholder(
       return "Queue for after the stop";
     case "waiting-for-host":
       return "Queue for when the host is back";
+    case "active-steers-on-enter":
+      return "Steer this run";
+    case "active-queues-on-enter":
+      return "Queue for after this run";
     case "error":
       return "Send a follow-up";
     case "pending":

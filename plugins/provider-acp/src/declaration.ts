@@ -63,6 +63,9 @@ export function acpProviderDeclaration(
     ...(agent.nativeRootsResolver === undefined
       ? {}
       : { experimental_resolvesNativeRoots: true }),
+    ...(agent.guidedSignIn === true
+      ? { internal_DO_NOT_USE_guidedSignIn: true }
+      : {}),
     experimental_bridgeOptions: {
       ...(agent.dialect === undefined ? {} : { acpDialect: agent.dialect }),
       ...(agent.parameterizedModelPicker === true
@@ -80,7 +83,7 @@ export function acpProviderDeclaration(
           }),
       acpLaunchSpec: { ...agent.launch },
     },
-    models: { scope: "host" },
+    models: { scope: agent.modelCatalogScope ?? "host" },
     maintenance: {
       health: true,
       usage: agent.providerUsage === true,

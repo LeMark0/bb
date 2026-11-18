@@ -91,6 +91,96 @@ describe("bb thread tell command output", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it("bb thread tell --progress asks the parent to hold the update and says it is held", async () => {
+    const post = vi.fn(async (_request: { json: unknown }) => ({
+      ok: true,
+      delivery: "queued",
+      queuedMessage: {
+        id: "qm_progress",
+        waitingOn: { kind: "progress", endsTurnId: "turn-1" },
+        sendAt: null,
+      },
+    }));
+    stubServerApi({ "v1.threads.:id.send.$post": post });
+
+    await runCommand(
+      [
+        "thread",
+        "tell",
+        "thread-parent",
+        "Draft ready",
+        "--progress",
+        "--ends-turn",
+      ],
+      register,
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        json: expect.objectContaining({
+          mode: "steer-if-active",
+          progress: true,
+          progressEndsTurn: true,
+        }),
+      }),
+    );
+    expect(vi.mocked(console.log).mock.calls.map((call) => call[0])).toEqual([
+      "Thread thread-parent progress update held; it goes with the thread's next turn",
+    ]);
+  });
+
+  it("bb thread tell --progress says when the update was sent normally instead", async () => {
+    stubServerApi({
+      "v1.threads.:id.send.$post": vi.fn(async () => ({
+        ok: true,
+        delivery: "sent",
+      })),
+    });
+
+    await runCommand(
+      ["thread", "tell", "thread-other", "Draft ready", "--progress"],
+      register,
+    );
+
+    expect(vi.mocked(console.log).mock.calls.map((call) => call[0])).toEqual([
+      "Not held as progress because the sender is not a child of thread-other. Thread thread-other steered",
+    ]);
+  });
+
+  it("bb thread tell refuses flags that a progress update cannot carry", async () => {
+    const post = vi.fn(async () => ({ ok: true, delivery: "sent" }));
+    stubServerApi({ "v1.threads.:id.send.$post": post });
+
+    await expect(
+      runCommand(
+        [
+          "thread",
+          "tell",
+          "thread-parent",
+          "Draft",
+          "--progress",
+          "--mode",
+          "queue",
+          "--model",
+          "gpt",
+        ],
+        register,
+      ),
+    ).rejects.toThrow("process.exit:1");
+    await expect(
+      runCommand(
+        ["thread", "tell", "thread-parent", "Draft", "--ends-turn"],
+        register,
+      ),
+    ).rejects.toThrow("process.exit:1");
+
+    expect(post).not.toHaveBeenCalled();
+    expect(vi.mocked(console.error).mock.calls.map((call) => call[0])).toEqual([
+      "Error: --progress cannot be combined with --model, --mode",
+      "Error: --ends-turn requires --progress",
+    ]);
+  });
+
   it("bb thread tell names the typed reason a message queued for", async () => {
     // The server says WHY, so the CLI stops inferring it from the flags it
     // sent — which is what let the old four-way delivery enum collapse.

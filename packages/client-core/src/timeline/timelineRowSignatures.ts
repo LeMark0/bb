@@ -354,6 +354,8 @@ function computeTimelineRowRenderSignature(row: ThreadTimelineViewRow): string {
         row.attachments?.localFiles,
         row.attachments?.localImages,
         row.attachments?.webImages,
+        row.role === "user" ? row.requestPlan?.revisionSeq : null,
+        row.role === "user" ? row.requestPlan?.turnStatus : null,
       ]);
     case "system":
       if (row.systemKind === "operation") {

@@ -27,19 +27,15 @@ import {
 } from "../queries/query-keys";
 import { threadDefaultExecutionOptionsQueryKey } from "../queries/thread-default-execution-options-query";
 import {
-  applyQueuedMessageCreateResult,
   applyQueuedMessageSendResult,
   applyQueuedMessageUpdateResult,
   applySendThreadMessageSuccess,
-  applyThreadGoalClearResult,
   applyThreadPlanCancellationResult,
-  beginCreateQueuedMessageTransaction,
   beginRemoveQueuedMessageTransaction,
   beginReorderQueuedMessageTransaction,
   beginSendQueuedMessageTransaction,
   beginSendThreadMessageTransaction,
   beginUpdateQueuedMessageTransaction,
-  rollbackCreateQueuedMessageTransaction,
   rollbackRemoveQueuedMessageTransaction,
   rollbackSendThreadMessageTransaction,
   rollbackUpdateQueuedMessageTransaction,
@@ -63,7 +59,6 @@ function makeThreadListEntry(id = "thread-1"): ThreadListEntry {
       activeBackgroundAgentCount: 0,
       activeBackgroundCommandCount: 0,
       activePlanModeCount: 1,
-      activeGoalCount: 1,
     },
     environmentHostId: "host-1",
     environmentName: "Environment",
@@ -111,90 +106,68 @@ function makeQueuedMessage(
 }
 
 describe("thread runtime cache owner", () => {
-  it.each([
-    ["Plan", applyThreadPlanCancellationResult, "activePlanModeCount"],
-    ["Goal", applyThreadGoalClearResult, "activeGoalCount"],
-  ] as const)(
-    "reconciles authoritative %s cancellation across banner caches while preserving independent state",
-    (label, applyResult, clearedCount) => {
-      const queryClient = createAppQueryClient({
-        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
-        showMutationErrorToasts: false,
-      });
-      const thread = makeThreadListEntry();
-      const listKey = threadListQueryKey({
-        archived: false,
-        projectId: "project-1",
-      });
-      const secondListKey = threadListQueryKey({
-        archived: false,
-        projectId: undefined,
-      });
-      const searchKey = threadSearchQueryKey({
-        query: "work",
-        limitPerGroup: 20,
-      });
-      queryClient.setQueryData(listKey, [thread]);
-      queryClient.setQueryData(secondListKey, [thread]);
-      queryClient.setQueryData(
-        sidebarNavigationQueryKey(),
-        makeSidebarNavigation([thread]),
-      );
-      queryClient.setQueryData(searchKey, makeSearchResponse(thread));
-      queryClient.setQueryData(threadTimelineQueryKey("thread-1"), {
-        ...makeTimelineResponse(),
-        activePromptMode: {
-          mode: "plan",
-          providerId: "codex",
-          prompt: "Plan the work",
-        },
-        goal: {
-          sourceSeq: 1,
-          updatedAt: 100,
-          objective: "Finish the work",
-          status: "active",
-          tokenBudget: null,
-          tokensUsed: 100,
-          timeUsedSeconds: 10,
-        },
-      });
+  it("reconciles authoritative Plan cancellation across banner caches while preserving independent state", () => {
+    const queryClient = createAppQueryClient({
+      defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+      showMutationErrorToasts: false,
+    });
+    const thread = makeThreadListEntry();
+    const listKey = threadListQueryKey({
+      archived: false,
+      projectId: "project-1",
+    });
+    const secondListKey = threadListQueryKey({
+      archived: false,
+      projectId: undefined,
+    });
+    const searchKey = threadSearchQueryKey({
+      query: "work",
+      limitPerGroup: 20,
+    });
+    queryClient.setQueryData(listKey, [thread]);
+    queryClient.setQueryData(secondListKey, [thread]);
+    queryClient.setQueryData(
+      sidebarNavigationQueryKey(),
+      makeSidebarNavigation([thread]),
+    );
+    queryClient.setQueryData(searchKey, makeSearchResponse(thread));
+    queryClient.setQueryData(threadTimelineQueryKey("thread-1"), {
+      ...makeTimelineResponse(),
+      activePromptMode: {
+        mode: "plan",
+        providerId: "codex",
+        prompt: "Plan the work",
+      },
+      extensionStates: { "provider-codex/goal": { status: "active" } },
+    });
 
-      applyResult({ queryClient, threadId: "thread-1" });
+    applyThreadPlanCancellationResult({ queryClient, threadId: "thread-1" });
 
-      const timeline = queryClient.getQueryData<ThreadTimelineResponse>(
-        threadTimelineQueryKey("thread-1"),
-      );
-      if (label === "Plan") {
-        expect(timeline?.activePromptMode).toBeNull();
-        expect(timeline?.goal).toMatchObject({ objective: "Finish the work" });
-      } else {
-        expect(timeline?.activePromptMode).toMatchObject({ mode: "plan" });
-        expect(timeline?.goal).toBeNull();
-      }
+    const timeline = queryClient.getQueryData<ThreadTimelineResponse>(
+      threadTimelineQueryKey("thread-1"),
+    );
+    expect(timeline?.activePromptMode).toBeNull();
+    expect(timeline?.extensionStates).toEqual({
+      "provider-codex/goal": { status: "active" },
+    });
 
-      const listEntries = [listKey, secondListKey].map(
-        (queryKey) =>
-          queryClient.getQueryData<ThreadListEntry[]>(queryKey)?.[0],
-      );
-      const sidebarEntry = queryClient.getQueryData<SidebarBootstrapResponse>(
-        sidebarNavigationQueryKey(),
-      )?.projects[0]?.threads[0];
-      const searchEntry =
-        queryClient.getQueryData<ThreadSearchResponse>(searchKey)?.active
-          .results[0]?.thread;
+    const listEntries = [listKey, secondListKey].map(
+      (queryKey) => queryClient.getQueryData<ThreadListEntry[]>(queryKey)?.[0],
+    );
+    const sidebarEntry = queryClient.getQueryData<SidebarBootstrapResponse>(
+      sidebarNavigationQueryKey(),
+    )?.projects[0]?.threads[0];
+    const searchEntry =
+      queryClient.getQueryData<ThreadSearchResponse>(searchKey)?.active
+        .results[0]?.thread;
 
-      for (const entry of [...listEntries, sidebarEntry, searchEntry]) {
-        expect(entry?.activity[clearedCount]).toBe(0);
-        expect(
-          entry?.activity[
-            clearedCount === "activePlanModeCount"
-              ? "activeGoalCount"
-              : "activePlanModeCount"
-          ],
-        ).toBe(1);
-      }
-    },
-  );
+    for (const entry of [...listEntries, sidebarEntry, searchEntry]) {
+      expect(entry?.activity).toMatchObject({
+        activePlanModeCount: 0,
+        activeWorkflowCount: 0,
+      });
+    }
+  });
 
   it("omits agent-only text from optimistic user messages", async () => {
     const queryClient = createAppQueryClient({
@@ -238,109 +211,6 @@ describe("thread runtime cache owner", () => {
     });
   });
 
-  it("optimistically appends queued messages and replaces them with the server row", async () => {
-    const queryClient = createAppQueryClient({
-      defaultOptions: { queries: { gcTime: Infinity, retry: false } },
-      showMutationErrorToasts: false,
-    });
-    queryClient.setQueryData(threadQueuedMessagesQueryKey("thread-1"), [
-      makeQueuedMessage({ id: "qmsg-existing" }),
-    ]);
-    queryClient.setQueryData(
-      threadDefaultExecutionOptionsQueryKey("thread-1"),
-      {
-        model: "codex-default",
-        reasoningLevel: "high",
-        permissionMode: "accept-edits",
-        serviceTier: "fast",
-      },
-    );
-    queryClient.setQueryData(threadPromptHistoryQueryKey("thread-1"), []);
-
-    const transaction = await beginCreateQueuedMessageTransaction({
-      queryClient,
-      request: {
-        id: "thread-1",
-        input: [{ type: "text", text: "Queue this", mentions: [] }],
-      },
-    });
-
-    const optimisticQueue = queryClient.getQueryData<ThreadQueuedMessage[]>(
-      threadQueuedMessagesQueryKey("thread-1"),
-    );
-    expect(optimisticQueue).toHaveLength(2);
-    expect(optimisticQueue?.[1]).toMatchObject({
-      id: expect.stringMatching(/^optimistic-queued-/u),
-      content: [{ type: "text", text: "Queue this", mentions: [] }],
-      model: "codex-default",
-      reasoningLevel: "high",
-      permissionMode: "accept-edits",
-      serviceTier: "fast",
-    });
-
-    const serverQueuedMessage = makeQueuedMessage({
-      id: "qmsg-server",
-      content: [{ type: "text", text: "Queue this", mentions: [] }],
-      createdAt: 10,
-      updatedAt: 10,
-    });
-    applyQueuedMessageCreateResult({
-      queryClient,
-      queuedMessage: serverQueuedMessage,
-      threadId: "thread-1",
-      transaction,
-    });
-
-    expect(
-      queryClient
-        .getQueryData<ThreadQueuedMessage[]>(
-          threadQueuedMessagesQueryKey("thread-1"),
-        )
-        ?.map((queuedMessage) => queuedMessage.id),
-    ).toEqual(["qmsg-existing", "qmsg-server"]);
-    expect(
-      queryClient.getQueryData(threadPromptHistoryQueryKey("thread-1")),
-    ).toEqual([
-      {
-        id: "queued-message:qmsg-server",
-        createdAt: 10,
-        input: [{ type: "text", text: "Queue this", mentions: [] }],
-      },
-    ]);
-  });
-
-  it("rolls back optimistic queued message creation", async () => {
-    const queryClient = createAppQueryClient({
-      defaultOptions: { queries: { gcTime: Infinity, retry: false } },
-      showMutationErrorToasts: false,
-    });
-    const previousQueue = [makeQueuedMessage({ id: "qmsg-existing" })];
-    queryClient.setQueryData(
-      threadQueuedMessagesQueryKey("thread-1"),
-      previousQueue,
-    );
-
-    const transaction = await beginCreateQueuedMessageTransaction({
-      queryClient,
-      request: {
-        id: "thread-1",
-        input: [{ type: "text", text: "Queue this", mentions: [] }],
-      },
-    });
-    rollbackCreateQueuedMessageTransaction({
-      queryClient,
-      request: {
-        id: "thread-1",
-        input: [{ type: "text", text: "Queue this", mentions: [] }],
-      },
-      transaction,
-    });
-
-    expect(
-      queryClient.getQueryData(threadQueuedMessagesQueryKey("thread-1")),
-    ).toEqual(previousQueue);
-  });
-
   it("updates queued message content without changing its queue position", async () => {
     const queryClient = createAppQueryClient({
       defaultOptions: { queries: { gcTime: Infinity, retry: false } },
@@ -368,9 +238,9 @@ describe("thread runtime cache owner", () => {
     });
     expect(
       queryClient
-        .getQueryData<ThreadQueuedMessage[]>(
-          threadQueuedMessagesQueryKey("thread-1"),
-        )
+        .getQueryData<
+          ThreadQueuedMessage[]
+        >(threadQueuedMessagesQueryKey("thread-1"))
         ?.map((queuedMessage) => ({
           content: queuedMessage.content,
           groupWithNext: queuedMessage.groupWithNext,
@@ -398,9 +268,9 @@ describe("thread runtime cache owner", () => {
     });
     expect(
       queryClient
-        .getQueryData<ThreadQueuedMessage[]>(
-          threadQueuedMessagesQueryKey("thread-1"),
-        )
+        .getQueryData<
+          ThreadQueuedMessage[]
+        >(threadQueuedMessagesQueryKey("thread-1"))
         ?.map((queuedMessage) => queuedMessage.id),
     ).toEqual(["qmsg-first", "qmsg-edit", "qmsg-last"]);
 
@@ -539,50 +409,60 @@ describe("thread runtime cache owner", () => {
     ).toEqual([remaining]);
   });
 
-  it("optimistically queues queue-if-active sends", async () => {
-    const queryClient = createAppQueryClient({
-      defaultOptions: { queries: { gcTime: Infinity, retry: false } },
-      showMutationErrorToasts: false,
-    });
-    queryClient.setQueryData(threadQueryKey("thread-1"), {
-      status: "active",
-    });
-    queryClient.setQueryData(threadQueuedMessagesQueryKey("thread-1"), []);
+  it.each([
+    "active",
+    "provisioning",
+    "starting",
+    "stopping",
+    "waiting-for-host",
+  ] as const)(
+    "optimistically queues queue-if-active sends while %s",
+    async (displayStatus) => {
+      const queryClient = createAppQueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+        showMutationErrorToasts: false,
+      });
+      queryClient.setQueryData(threadQueryKey("thread-1"), {
+        status: "active",
+        runtime: { displayStatus },
+      });
+      queryClient.setQueryData(threadQueuedMessagesQueryKey("thread-1"), []);
 
-    const transaction = await beginSendThreadMessageTransaction({
-      queryClient,
-      request: {
-        id: "thread-1",
-        mode: "queue-if-active",
-        input: [{ type: "text", text: "Queue through send", mentions: [] }],
-      },
-    });
+      const transaction = await beginSendThreadMessageTransaction({
+        queryClient,
+        request: {
+          id: "thread-1",
+          mode: "queue-if-active",
+          input: [{ type: "text", text: "Queue through send", mentions: [] }],
+        },
+      });
 
-    expect(transaction.kind).toBe("queued-message");
-    expect(
-      queryClient.getQueryData<ThreadQueuedMessage[]>(
-        threadQueuedMessagesQueryKey("thread-1"),
-      ),
-    ).toMatchObject([
-      {
-        id: expect.stringMatching(/^optimistic-queued-/u),
-        content: [{ type: "text", text: "Queue through send", mentions: [] }],
-      },
-    ]);
+      expect(transaction.kind).toBe("queued-message");
+      expect(
+        queryClient.getQueryData<ThreadQueuedMessage[]>(
+          threadQueuedMessagesQueryKey("thread-1"),
+        ),
+      ).toMatchObject([
+        {
+          id: expect.stringMatching(/^optimistic-queued-/u),
+          content: [{ type: "text", text: "Queue through send", mentions: [] }],
+        },
+      ]);
 
-    rollbackSendThreadMessageTransaction({
-      queryClient,
-      request: {
-        id: "thread-1",
-        mode: "queue-if-active",
-        input: [{ type: "text", text: "Queue through send", mentions: [] }],
-      },
-      transaction,
-    });
-    expect(
-      queryClient.getQueryData(threadQueuedMessagesQueryKey("thread-1")),
-    ).toEqual([]);
-  });
+      rollbackSendThreadMessageTransaction({
+        queryClient,
+        request: {
+          id: "thread-1",
+          mode: "queue-if-active",
+          input: [{ type: "text", text: "Queue through send", mentions: [] }],
+        },
+        transaction,
+      });
+      expect(
+        queryClient.getQueryData(threadQueuedMessagesQueryKey("thread-1")),
+      ).toEqual([]);
+    },
+  );
 
   it("optimistically queues a scheduled send even when the cached thread is idle", async () => {
     const queryClient = createAppQueryClient({
@@ -1005,9 +885,9 @@ describe("thread runtime cache owner", () => {
 
     expect(
       queryClient
-        .getQueryData<ThreadQueuedMessage[]>(
-          threadQueuedMessagesQueryKey("thread-1"),
-        )
+        .getQueryData<
+          ThreadQueuedMessage[]
+        >(threadQueuedMessagesQueryKey("thread-1"))
         ?.map((queuedMessage) => queuedMessage.id),
     ).toEqual(["qmsg-3"]);
     const timeline = queryClient.getQueryData<ThreadTimelineResponse>(
@@ -1247,6 +1127,70 @@ describe("thread runtime cache owner", () => {
       unsubscribe();
     }
   });
+
+  it.each(["sent", "failed"] as const)(
+    "preserves a pending queue refresh when a direct send is %s",
+    async (outcome) => {
+      const queryClient = createAppQueryClient({
+        defaultOptions: { queries: { gcTime: Infinity, retry: false } },
+        showMutationErrorToasts: false,
+      });
+      const queryKey = threadQueuedMessagesQueryKey("thread-1");
+      queryClient.setQueryData(queryKey, [
+        makeQueuedMessage({ waitingOn: { kind: "provisioning" } }),
+      ]);
+      let completeRefresh!: (messages: ThreadQueuedMessage[]) => void;
+      const response = new Promise<ThreadQueuedMessage[]>((resolve) => {
+        completeRefresh = resolve;
+      });
+      let refreshSignal: AbortSignal | undefined;
+      const observer = new QueryObserver(queryClient, {
+        queryKey,
+        queryFn: ({ signal }) => {
+          refreshSignal = signal;
+          return response;
+        },
+        staleTime: Infinity,
+      });
+      const unsubscribe = observer.subscribe(() => {});
+      try {
+        const refresh = queryClient.invalidateQueries({ queryKey });
+        expect(refreshSignal).toBeDefined();
+        const request = {
+          id: "thread-1",
+          mode: "auto" as const,
+          input: [{ type: "text" as const, text: "orange", mentions: [] }],
+        };
+        const transaction = await beginSendThreadMessageTransaction({
+          queryClient,
+          request,
+        });
+        expect(transaction.kind).toBe("accepted-turn");
+        if (outcome === "sent") {
+          applySendThreadMessageSuccess({
+            queryClient,
+            realtimeConnected: true,
+            request,
+            result: { ok: true, delivery: "sent" },
+            transaction,
+          });
+        } else {
+          rollbackSendThreadMessageTransaction({
+            queryClient,
+            request,
+            transaction,
+          });
+        }
+        completeRefresh([]);
+        await refresh;
+        expect(queryClient.getQueryData(queryKey)).toEqual([]);
+        expect(refreshSignal?.aborted).toBe(false);
+      } finally {
+        unsubscribe();
+        queryClient.clear();
+      }
+    },
+  );
 
   it("moves a predicted queued send into the timeline when the server sends it", async () => {
     const queryClient = createAppQueryClient({

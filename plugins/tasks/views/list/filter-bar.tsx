@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { PriorityIcon, StatusIcon } from "./icons.js";
 import {
@@ -21,6 +22,7 @@ import {
   STATUS_LABELS,
   type LabelFilterOption,
 } from "./lib.js";
+import { LIST_SEARCH_MAX_LENGTH } from "./list-search.js";
 
 function toggled<T>(values: readonly T[], value: T, checked: boolean): T[] {
   if (checked) return values.includes(value) ? [...values] : [...values, value];
@@ -108,6 +110,58 @@ function SortChip({
   );
 }
 
+function SearchField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div role="search" className="relative w-full @2xl:w-56 @2xl:shrink-0">
+      <Icon
+        name="Search"
+        className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-subtle-foreground"
+      />
+      <Input
+        ref={inputRef}
+        type="search"
+        aria-label="Search tasks"
+        placeholder="Search tasks"
+        enterKeyHint="search"
+        spellCheck={false}
+        maxLength={LIST_SEARCH_MAX_LENGTH}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          if (value.length === 0) {
+            event.currentTarget.blur();
+            return;
+          }
+          event.preventDefault();
+          onChange("");
+        }}
+        className="h-6 pl-6 pr-6 text-xs max-md:pointer-coarse:h-10 max-md:pointer-coarse:pr-10 [&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
+      />
+      {value.length > 0 ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => {
+            onChange("");
+            inputRef.current?.focus();
+          }}
+          className="absolute right-0.5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring max-md:pointer-coarse:size-9"
+        >
+          <Icon name="X" className="size-3" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export interface ListFilterState {
   statuses: TaskStatus[];
   priorities: TaskPriority[];
@@ -129,6 +183,8 @@ export function hasActiveFilters(filters: ListFilterState): boolean {
 }
 
 export function ListFilterBar({
+  search,
+  onSearchChange,
   filters,
   onChange,
   sort,
@@ -136,6 +192,8 @@ export function ListFilterBar({
   labelOptions,
   taskCount,
 }: {
+  search: string;
+  onSearchChange: (search: string) => void;
   filters: ListFilterState;
   onChange: (filters: ListFilterState) => void;
   sort: TaskSort;
@@ -147,7 +205,8 @@ export function ListFilterBar({
   const showLabelChip =
     labelOptions.length > 0 || filters.labelNames.length > 0;
   return (
-    <div className="flex shrink-0 items-center gap-1.5 border-b border-border-hairline px-3.5 py-1.5">
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border-hairline px-3.5 py-1.5">
+      <SearchField value={search} onChange={onSearchChange} />
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
         <FilterChip
           icon="Circle"

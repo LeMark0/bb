@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createTasksStore,
   type CreatePresetInput,
   TasksPageCursorError,
 } from "./db";
+import { sortTasks } from "./shared/sort";
 
 function setup() {
   const { bb, harness } = createFakePluginHost({ pluginId: "tasks-db-test" });
@@ -395,6 +396,7 @@ describe("tasks storage", () => {
 
       expect(matchingKeys("deployment readiness")).toEqual([matching.key]);
       expect(matchingKeys("readiness deployment")).toEqual([matching.key]);
+      expect(matchingKeys(matching.key.toLowerCase())).toEqual([matching.key]);
     } finally {
       await harness.dispose();
     }
@@ -463,6 +465,160 @@ describe("tasks storage", () => {
       expect(collect("manual")).toEqual([fixtures[0]!.key, fixtures[3]!.key]);
       expect(collect("priority")).toEqual([fixtures[3]!.key, fixtures[0]!.key]);
       expect(collect("due")).toEqual([fixtures[3]!.key, fixtures[0]!.key]);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("pages created and updated sorts newest first across equal timestamps, matching the list view order", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { harness, store } = setup();
+    try {
+      const at = (time: string) =>
+        vi.setSystemTime(new Date(`2026-08-01T${time}.000Z`));
+      const project = createProject(store, "DTS");
+      const other = createProject(store, "OTH");
+      const create = (title: string, status: "todo" | "done" = "todo") =>
+        store.createTask({ projectId: project.id, title, status });
+
+      at("10:00:00");
+      const a = create("Sortable A");
+      const b = create("Sortable B");
+      const c = create("Sortable C", "done");
+      at("10:02:00");
+      const e = create("Sortable E");
+      at("10:03:00");
+      store.createTask({
+        projectId: other.id,
+        title: "Sortable elsewhere",
+        status: "todo",
+      });
+      create("Unrelated");
+      at("10:04:00");
+      store.createTask({
+        projectId: project.id,
+        title: "Sortable subtask",
+        status: "todo",
+        parentTaskId: a.id,
+      });
+      at("10:05:00");
+      store.updateTask(a.id, { title: "Sortable A edited" });
+      store.updateTask(c.id, { priority: "high" });
+
+      const filters = {
+        projectId: project.id,
+        statuses: ["todo" as const, "done" as const],
+        parentTaskId: null,
+        search: "sortable",
+      };
+      const collect = (sort: "created" | "updated") => {
+        const keys: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = store.listTasksPage({
+            ...filters,
+            sort,
+            limit: 1,
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          keys.push(...page.tasks.map((task) => task.key));
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+        return keys;
+      };
+      const viewOrder = (sort: "created" | "updated") =>
+        sortTasks(
+          store
+            .listTasks({ ...filters, sort: "manual" })
+            .map((task) => ({ ...task, labelIds: [] })),
+          sort,
+        ).map((task) => task.key);
+      const listAll = (sort: "created" | "updated") =>
+        store.listTasks({ ...filters, sort }).map((task) => task.key);
+
+      const created = [e.key, c.key, b.key, a.key];
+      expect(collect("created")).toEqual(created);
+      expect(listAll("created")).toEqual(created);
+      expect(viewOrder("created")).toEqual(created);
+
+      const updated = [c.key, a.key, e.key, b.key];
+      expect(collect("updated")).toEqual(updated);
+      expect(listAll("updated")).toEqual(updated);
+      expect(viewOrder("updated")).toEqual(updated);
+
+      at("10:06:00");
+      store.updateTask(b.id, { dueDate: "2026-09-01" });
+      expect(collect("updated")).toEqual([b.key, c.key, a.key, e.key]);
+      expect(collect("created")).toEqual(created);
+    } finally {
+      vi.useRealTimers();
+      await harness.dispose();
+    }
+  });
+
+  it("validates date-sort cursors and keeps prior-mode cursors in their original shape", async () => {
+    const { harness, store } = setup();
+    try {
+      const project = createProject(store, "DCU");
+      for (let index = 0; index < 3; index += 1) {
+        store.createTask({
+          projectId: project.id,
+          title: `Task ${index + 1}`,
+          status: "todo",
+        });
+      }
+      const firstCursor = (sort: "manual" | "priority" | "due" | "created") => {
+        const cursor = store.listTasksPage({
+          projectId: project.id,
+          sort,
+          limit: 1,
+        }).nextCursor;
+        if (cursor === null) throw new Error("expected another task page");
+        return cursor;
+      };
+      const decode = (cursor: string) =>
+        JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+          key: Record<string, unknown>;
+        };
+      const encode = (value: unknown) =>
+        Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+
+      for (const sort of ["manual", "priority", "due"] as const) {
+        expect(Object.keys(decode(firstCursor(sort)).key).sort()).toEqual([
+          "dueDate",
+          "dueNull",
+          "id",
+          "position",
+          "priority",
+          "projectId",
+          "status",
+        ]);
+      }
+
+      const created = firstCursor("created");
+      expect(() =>
+        store.listTasksPage({
+          projectId: project.id,
+          sort: "updated",
+          limit: 1,
+          cursor: created,
+        }),
+      ).toThrow("does not match --sort");
+
+      const stripped = decode(created);
+      delete stripped.key.createdAt;
+      try {
+        store.listTasksPage({
+          projectId: project.id,
+          sort: "created",
+          limit: 1,
+          cursor: encode(stripped),
+        });
+        throw new Error("expected invalid cursor failure");
+      } catch (error) {
+        if (!(error instanceof TasksPageCursorError)) throw error;
+        expect(error.code).toBe("invalid_cursor");
+      }
     } finally {
       await harness.dispose();
     }

@@ -90,6 +90,7 @@ function commandRow(
     callId: `call-${at}`,
     command: "/bin/zsh -lc 'pnpm test'",
     cwd: null,
+    description: null,
     source: null,
     output: "",
     exitCode: null,
@@ -258,6 +259,29 @@ describe("workerTurn", () => {
       detail: "rg -n zod package.json",
     });
     expect(turn.startedAt).toBe(10);
+  });
+
+  it("uses the command's own description field over earlier commentary", () => {
+    const turn = workerTurn([
+      userRow(10),
+      assistantRow(11, "Checking the build first."),
+      commandRow(12, {
+        command: "pnpm exec turbo run test",
+        description: "Verify the merged fork",
+        presentation: {
+          label: commandVerbs,
+          icon: { glyph: "Terminal" },
+          title: "pnpm exec turbo run test",
+        },
+      }),
+    ]);
+    expect(turn.activity).toEqual({
+      text: "Verify the merged fork",
+      source: "intent",
+      since: 12,
+      sinceKind: "running",
+      detail: "pnpm exec turbo run test",
+    });
   });
 
   it("falls back to commentary timed from when it was posted, not from the new command", () => {

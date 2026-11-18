@@ -1,5 +1,7 @@
+import type { ThreadEventPlanStep } from "@bb/domain";
 import type {
   TimelineCommandWorkRow,
+  TimelineRequestPlan,
   TimelineRow,
   TimelineRowStatus,
 } from "@bb/server-contract";
@@ -218,6 +220,9 @@ function formatWorkBody(
       if (row.approvalStatus !== null) {
         lines.push(`  ${workStatusLabel(row, context.color)}`);
       }
+      if (context.verbose && row.stderr?.trim()) {
+        lines.push(red(indentBlock(row.stderr.trimEnd(), "  "), context.color));
+      }
       if (context.verbose && row.change.diff) {
         lines.push(
           dim(indentBlock(row.change.diff.trimEnd(), "  "), context.color),
@@ -241,21 +246,8 @@ function formatWorkBody(
         lines.push(
           dim(`  ${PLAN_STEP_ORDER_CAPTION[plan.order]}`, context.color),
         );
-        for (const { step, text, position, after } of plan.steps) {
-          const marker =
-            step.status === "completed"
-              ? "[x]"
-              : step.status === "active"
-                ? "[>]"
-                : step.status === "failed"
-                  ? "[!]"
-                  : "[ ]";
-          lines.push(
-            dim(
-              `  ${marker} ${formatPlanStepLine({ order: plan.order, position, after, text })}`,
-              context.color,
-            ),
-          );
+        for (const line of formatPlanStepLines(row.steps)) {
+          lines.push(dim(`  ${line}`, context.color));
         }
       }
       return lines;
@@ -388,6 +380,50 @@ function formatTurnTitle(
   return buildTimelineRowTitle(row, cliTitleOptions(row, context)).plain;
 }
 
+function formatPlanStepLines(steps: readonly ThreadEventPlanStep[]): string[] {
+  const plan = orderPlanSteps(steps);
+  return plan.steps.map(({ step, text, position, after }) => {
+    const marker =
+      step.status === "completed"
+        ? "[x]"
+        : step.status === "active"
+          ? "[>]"
+          : step.status === "failed"
+            ? "[!]"
+            : "[ ]";
+    return `${marker} ${formatPlanStepLine({ order: plan.order, position, after, text })}`;
+  });
+}
+
+const REQUEST_PLAN_ENDED_LABEL: Readonly<
+  Record<Exclude<TimelineRowStatus, "pending">, string>
+> = {
+  completed: "turn ended",
+  interrupted: "stopped",
+  error: "turn failed",
+};
+
+function formatRequestPlan(
+  plan: TimelineRequestPlan | undefined,
+  context: TimelineTextFormatContext,
+): string | null {
+  if (plan === undefined) return null;
+  const lines = formatPlanStepLines(plan.steps);
+  if (lines.length === 0) return null;
+  const done = orderPlanSteps(plan.steps).steps.filter(
+    ({ step }) => step.status === "completed",
+  ).length;
+  const progress = `${done} of ${lines.length} done`;
+  const status =
+    plan.turnStatus === "pending" || done === lines.length
+      ? progress
+      : `${progress}, ${REQUEST_PLAN_ENDED_LABEL[plan.turnStatus]}`;
+  return dim(
+    indentBlock([`Plan (${status})`, ...lines].join("\n"), "  "),
+    context.color,
+  );
+}
+
 function formatConversationRequestLabel(
   row: TimelineConversationViewRow,
 ): string | null {
@@ -409,6 +445,9 @@ function formatRow(
         rowHeader(row.role === "user" ? "User" : "Assistant", context),
         row.text,
         formatConversationRequestLabel(row),
+        row.role === "user"
+          ? formatRequestPlan(row.requestPlan, context)
+          : null,
       ]
         .filter((line): line is string => line !== null)
         .join("\n");

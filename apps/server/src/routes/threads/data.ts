@@ -33,6 +33,10 @@ import { callHostRetryableOnlineRpc } from "../../services/hosts/online-rpc.js";
 import { requireThreadStorageTarget } from "../../services/threads/thread-storage.js";
 import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
 import {
+  isCompactionOfferEnabled,
+  withCompactionOffer,
+} from "../../services/threads/compaction-offer.js";
+import {
   toThreadEventWithMeta,
   buildThreadConversationOutlineProjectionKey,
   getThreadMessage,
@@ -52,7 +56,7 @@ import {
 } from "../../services/threads/thread-timeline-windows.js";
 import {
   findThreadEvent,
-  getLastThreadOutput,
+  getLatestTurnFinalOutput,
   listThreadEventRows,
 } from "../../services/threads/thread-data.js";
 import { listThreadPromptHistory } from "../../services/prompt-history.js";
@@ -150,7 +154,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
   const timelineWindows = createThreadTimelineWindows(deps);
   const conversationOutlineCache = new Map<
     string,
-    ThreadConversationOutlineResponse["items"]
+    { key: string; items: ThreadConversationOutlineResponse["items"] }
   >();
   const CONVERSATION_OUTLINE_CACHE_MAX_ENTRIES = 128;
   const resolveConversationRowsOptions = (thread: Thread) => {
@@ -219,8 +223,19 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       threadId: thread.id,
       sequenceStart,
     });
+    const usage = extractThreadContextWindowUsage(
+      rows.map(toThreadEventWithMeta),
+    );
     return context.json({
-      usage: extractThreadContextWindowUsage(rows.map(toThreadEventWithMeta)),
+      usage:
+        usage === null
+          ? null
+          : withCompactionOffer(deps.db, {
+              enabled: isCompactionOfferEnabled(deps, thread.providerId),
+              sequenceStart,
+              threadId: thread.id,
+              usage,
+            }),
     });
   });
 
@@ -235,7 +250,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           page: parseThreadTimelinePage(query),
           summaryOnly: query.summaryOnly === "true",
         },
-        parseOptionalInteger(query.afterSequence, "afterSequence"),
+        query.afterTag,
       ),
     );
   });
@@ -262,17 +277,21 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
         outlineOptions,
       ),
     ]);
-    const cached = conversationOutlineCache.get(cacheKey);
-    if (cached !== undefined) {
-      conversationOutlineCache.delete(cacheKey);
-      conversationOutlineCache.set(cacheKey, cached);
-      return context.json({ items: selectItems(cached), maxSeq });
+    const cached = conversationOutlineCache.get(thread.id);
+    if (cached !== undefined && cached.key === cacheKey) {
+      conversationOutlineCache.delete(thread.id);
+      conversationOutlineCache.set(thread.id, cached);
+      return context.json({ items: selectItems(cached.items), maxSeq });
     }
     const response = loadThreadConversationOutline(deps.db, thread, {
       ...outlineOptions,
       outlineSequence,
     });
-    conversationOutlineCache.set(cacheKey, response.items);
+    conversationOutlineCache.delete(thread.id);
+    conversationOutlineCache.set(thread.id, {
+      key: cacheKey,
+      items: response.items,
+    });
     while (
       conversationOutlineCache.size > CONVERSATION_OUTLINE_CACHE_MAX_ENTRIES
     ) {
@@ -319,6 +338,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           thread.providerId,
         ),
         includeDiagnosticOperations: settings.showDiagnosticEvents,
+        summarizeShellCommands: settings.summarizeShellCommands,
         providerDisplayName: resolveThreadProviderDisplayName(
           deps,
           thread.providerId,
@@ -333,7 +353,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
   get(routes.output, (context) => {
     requirePublicThread(deps.db, context.req.param("id"));
     return context.json({
-      output: getLastThreadOutput(deps.db, context.req.param("id")),
+      output: getLatestTurnFinalOutput(deps.db, context.req.param("id")),
     });
   });
 
@@ -450,6 +470,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
         timeoutMs: COMMAND_TIMEOUT_MS,
         command: {
           type: "host.list_files",
+          followRootSymlink: false,
           path: target.storagePath,
           ...(query.query ? { query: query.query } : {}),
           limit,

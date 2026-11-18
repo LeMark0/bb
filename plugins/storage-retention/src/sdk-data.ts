@@ -13,3 +13,33 @@ export async function readThreads(bb: BbPluginApi, signal?: AbortSignal) {
     if (page.length < 500) return rows;
   }
 }
+export async function readThreadsById(
+  bb: BbPluginApi,
+  threadIds: readonly string[],
+  signal?: AbortSignal,
+) {
+  const rows: Awaited<ReturnType<typeof bb.sdk.threads.list>> = [];
+  for (let offset = 0; offset < threadIds.length; offset += 200) {
+    signal?.throwIfAborted();
+    rows.push(
+      ...(await bb.sdk.threads.list({
+        includeHidden: true,
+        threadIds: threadIds.slice(offset, offset + 200),
+        signal,
+      })),
+    );
+  }
+  return new Map(rows.map((thread) => [thread.id, thread]));
+}
+export async function readThreadsInEnvironments(
+  bb: BbPluginApi,
+  environmentIds: readonly string[],
+  signal?: AbortSignal,
+) {
+  const pages = await Promise.all(
+    environmentIds.map((environmentId) =>
+      bb.sdk.threads.list({ environmentId, includeHidden: true, signal }),
+    ),
+  );
+  return pages.flat();
+}

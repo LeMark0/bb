@@ -12,7 +12,9 @@ const ULIDS = [
 
 function task(
   key: string,
-  overrides: Partial<Pick<Task, "priority" | "dueDate">> = {},
+  overrides: Partial<
+    Pick<Task, "priority" | "dueDate" | "createdAt" | "updatedAt">
+  > = {},
 ): Task {
   return makeTask({
     id: ULIDS[Number(key.split("-")[1]) - 1]!,
@@ -68,5 +70,52 @@ describe("sortTasks", () => {
     ];
     expect(keys(sortTasks(input, "priority"))).toEqual(["T-3", "T-1", "T-2"]);
     expect(keys(sortTasks(input, "due"))).toEqual(["T-3", "T-1", "T-2"]);
+  });
+
+  it("orders created and updated dates newest first, independent of each other", () => {
+    const input = [
+      task("T-1", {
+        createdAt: "2026-07-01T09:00:00.000Z",
+        updatedAt: "2026-07-04T09:00:00.000Z",
+      }),
+      task("T-2", {
+        createdAt: "2026-07-03T09:00:00.000Z",
+        updatedAt: "2026-07-03T09:00:00.000Z",
+      }),
+      task("T-3", {
+        createdAt: "2026-07-02T09:00:00.000Z",
+        updatedAt: "2026-07-05T09:00:00.000Z",
+      }),
+    ];
+    expect(keys(sortTasks(input, "created"))).toEqual(["T-2", "T-3", "T-1"]);
+    expect(keys(sortTasks(input, "updated"))).toEqual(["T-3", "T-1", "T-2"]);
+  });
+
+  it("breaks equal created and updated times by id, newest id first, whatever the input order", () => {
+    const same = {
+      createdAt: "2026-07-01T09:00:00.000Z",
+      updatedAt: "2026-07-01T09:00:00.000Z",
+    };
+    const forward = [
+      task("T-1", same),
+      task("T-2", same),
+      task("T-3", same),
+      task("T-4", same),
+    ];
+    const shuffled = [forward[2]!, forward[0]!, forward[3]!, forward[1]!];
+    for (const sort of ["created", "updated"] as const) {
+      expect(keys(sortTasks(forward, sort))).toEqual([
+        "T-4",
+        "T-3",
+        "T-2",
+        "T-1",
+      ]);
+      expect(keys(sortTasks(shuffled, sort))).toEqual([
+        "T-4",
+        "T-3",
+        "T-2",
+        "T-1",
+      ]);
+    }
   });
 });

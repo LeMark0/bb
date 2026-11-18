@@ -106,6 +106,8 @@ export interface EventProjectionUserMessage extends EventProjectionMessageBase {
   systemMessageKind: SystemMessageKind;
   systemMessageSubject: SystemMessageSubject | null;
   turnRequest: EventProjectionTurnRequest;
+  progressNote?: true;
+  acceptedTurnId?: string;
   text: string;
   mentions: PromptTextMention[];
   attachments?: {
@@ -175,6 +177,7 @@ export interface EventProjectionCommandMessage
   kind: "command";
   callId: string;
   command: string;
+  description: string | null;
   cwd: string | null;
   parsedIntents: EventProjectionToolParsedIntent[];
   source: string | null;
@@ -478,6 +481,7 @@ export interface EventProjectionWorkflowMessage
   >;
   taskStatus: BackgroundTaskStatus;
   skipTranscript: boolean;
+  foreground: boolean;
   workflow: WorkflowProgressSnapshot | null;
   usage: BackgroundTaskUsage | null;
   summary: string | null;

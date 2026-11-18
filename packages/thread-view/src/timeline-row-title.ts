@@ -434,16 +434,39 @@ function presentedTitle({
       }),
     );
   }
-  const durationMs = completedAt !== null ? completedAt - startedAt : null;
   const decorations: TimelineTitleDecoration[] = [
     ...badgeDecorations({ presentation }),
-    ...(status === "error"
-      ? [statusDecoration("error", durationMs)]
-      : status === "interrupted"
-        ? [statusDecoration("interrupted", durationMs)]
-        : filterNull([durationDecoration(startedAt, completedAt)])),
+    ...outcomeDecorations(status, startedAt, completedAt),
   ];
   return makeTitle({ segments, decorations });
+}
+
+function outcomeDecorations(
+  status: TimelineRowStatus,
+  startedAt: number,
+  completedAt: number | null,
+): TimelineTitleDecoration[] {
+  const durationMs = completedAt !== null ? completedAt - startedAt : null;
+  if (status === "error" || status === "interrupted") {
+    return [statusDecoration(status, durationMs)];
+  }
+  return filterNull([durationDecoration(startedAt, completedAt)]);
+}
+
+function describedCommandTitle(
+  row: TimelineCommandWorkRow,
+  description: string,
+  status: TimelineRowStatus,
+): TimelineTitle {
+  return makeTitle({
+    segments: [
+      segment(description, { shimmer: status === "pending", truncate: true }),
+    ],
+    decorations: [
+      ...badgeDecorations(row),
+      ...outcomeDecorations(status, row.startedAt, row.completedAt),
+    ],
+  });
 }
 
 function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
@@ -452,18 +475,24 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
     status: row.status,
   });
   const isCommand = row.workKind === "command";
-  if (
-    row.presentation &&
-    status !== "waiting" &&
-    status !== "denied" &&
-    !isCommand
-  ) {
-    return presentedTitle({
-      presentation: row.presentation,
-      status,
-      startedAt: row.startedAt,
-      completedAt: row.completedAt,
-    });
+  const explorationTitle = isCommand
+    ? mapSingleExplorationIntentTitle(row)
+    : null;
+  if (explorationTitle !== null) {
+    return explorationTitle;
+  }
+  if (status !== "waiting" && status !== "denied") {
+    if (isCommand && row.description !== null) {
+      return describedCommandTitle(row, row.description, status);
+    }
+    if (!isCommand && row.presentation) {
+      return presentedTitle({
+        presentation: row.presentation,
+        status,
+        startedAt: row.startedAt,
+        completedAt: row.completedAt,
+      });
+    }
   }
   if (
     isCommand &&
@@ -481,11 +510,6 @@ function mapExecutionTitle(row: TimelineExecutionWorkRow): TimelineTitle {
   const content = isCommand
     ? row.command
     : formatToolCallCommand(row.toolName, row.toolArgs);
-  const explorationTitle =
-    row.workKind === "command" ? mapSingleExplorationIntentTitle(row) : null;
-  if (explorationTitle !== null) {
-    return explorationTitle;
-  }
   const badges = badgeDecorations(row);
   switch (status) {
     case "waiting":

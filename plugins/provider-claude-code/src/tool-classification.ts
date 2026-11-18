@@ -51,7 +51,7 @@ const claudeSandboxOverrideFlagSchema = z
   .passthrough();
 
 const claudeBashDescriptionSchema = z
-  .object({ description: z.string().optional() })
+  .object({ description: z.string() })
   .passthrough();
 
 const claudeReadArgsSchema = z
@@ -106,8 +106,8 @@ const claudeTodoWriteArgsSchema = z
 
 interface ClaudeBashCommand {
   command: string;
-  description: string | null;
   cwd: string | null;
+  description: string | null;
   background: boolean;
   sandboxOverridden: boolean;
 }
@@ -128,10 +128,11 @@ export function parseClaudeBashCommand(
   const description = claudeBashDescriptionSchema.safeParse(input);
   return {
     command,
-    description: description.success
-      ? (toOptionalString(description.data.description) ?? null)
-      : null,
     cwd: toOptionalString(parsed.data.cwd) ?? null,
+    description:
+      description.success && description.data.description.trim().length > 0
+        ? description.data.description.trim()
+        : null,
     background:
       background.success && background.data.run_in_background === true,
     sandboxOverridden:
@@ -356,6 +357,7 @@ export function classifyClaudeToolUse(args: {
   input: unknown;
   injectedTools: ReadonlyMap<string, ClaudeInjectedTool>;
   sandboxEnabled: boolean;
+  commandDescriptionsEnabled: boolean;
 }): ClaudeClassifiedTool {
   const { toolName, toolUseId, input, sandboxEnabled } = args;
   switch (toolName) {
@@ -367,6 +369,10 @@ export function classifyClaudeToolUse(args: {
               type: "command",
               command: command.command,
               cwd: command.cwd ?? "",
+              ...(args.commandDescriptionsEnabled &&
+              command.description !== null
+                ? { description: command.description }
+                : {}),
             },
             presentation: commandPresentation({
               ...command,
@@ -483,7 +489,6 @@ export function classifyClaudeToolResultFallback(
       shape: { type: "command", command: "", cwd: sessionCwd },
       presentation: commandPresentation({
         command: "",
-        description: null,
         background: false,
         sandboxEscaped: false,
       }),

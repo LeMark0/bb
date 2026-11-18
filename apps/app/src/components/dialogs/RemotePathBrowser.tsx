@@ -7,9 +7,21 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { normalizeProjectPathInput } from "@bb/domain";
+import {
+  getHostPathBasename,
+  getHostPathDirname,
+  joinHostPath,
+  normalizeHostPath,
+  normalizeProjectPathInput,
+} from "@bb/domain";
 import type { HostDirectoryListing } from "@bb/server-contract";
 import { Button } from "@bb/shared-ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@bb/shared-ui/dropdown-menu";
 import { EmptyState } from "@bb/shared-ui/empty-state";
 import { Icon } from "@bb/shared-ui/icon";
 import { usePointerCoarse } from "@bb/shared-ui/hooks/use-pointer-coarse";
@@ -26,33 +38,18 @@ interface Crumb {
 }
 
 export function toBreadcrumb(directory: string): Crumb[] {
-  const isWindows = /^[A-Za-z]:/.test(directory);
-  if (!isWindows) {
-    const crumbs: Crumb[] = [{ label: "/", path: "/" }];
-    let accumulated = "";
-    for (const segment of directory.split("/").filter(Boolean)) {
-      accumulated = `${accumulated}/${segment}`;
-      crumbs.push({ label: segment, path: accumulated });
-    }
-    return crumbs;
-  }
-
-  const segments = directory.replace(/\//g, "\\").split("\\").filter(Boolean);
-  const drive = segments[0] ?? "";
-  const crumbs: Crumb[] = [{ label: drive, path: `${drive}\\` }];
-  let accumulated = drive;
-  for (const segment of segments.slice(1)) {
-    accumulated = `${accumulated}\\${segment}`;
-    crumbs.push({ label: segment, path: accumulated });
+  const crumbs: Crumb[] = [];
+  let path = normalizeHostPath(directory);
+  while (path !== null) {
+    crumbs.unshift({
+      label: getHostPathBasename(path) || path.replace(/\\$/u, ""),
+      path,
+    });
+    const parent = getHostPathDirname(path);
+    if (parent === path) break;
+    path = parent;
   }
   return crumbs;
-}
-
-export function joinHostPath(directory: string, name: string): string {
-  if (/^[A-Za-z]:/.test(directory)) {
-    return `${directory.replace(/[\\/]+$/, "")}\\${name}`;
-  }
-  return `${directory.replace(/\/+$/, "")}/${name}`;
 }
 
 export function getFolderNameValidationMessage(name: string): string | null {
@@ -66,6 +63,7 @@ const DIRECTORY_ENTRY_ROW_HEIGHT_PX = 28;
 const DIRECTORY_ENTRY_OVERSCAN_ROWS = 10;
 
 const NO_ENTRIES: HostDirectoryListing["entries"] = [];
+const NO_ROOTS: HostDirectoryListing["roots"] = [];
 
 interface RemotePathBrowserProps {
   hostId: string;
@@ -101,6 +99,7 @@ export function RemotePathBrowser({
   const crumbs = directory ? toBreadcrumb(directory) : [];
 
   const entries = data?.entries ?? NO_ENTRIES;
+  const roots = data?.roots ?? NO_ROOTS;
   const scrollRef = useRef<HTMLDivElement>(null);
   const getScrollElement = useCallback(() => scrollRef.current, []);
   const estimateEntrySize = useCallback(
@@ -148,7 +147,8 @@ export function RemotePathBrowser({
 
   const createFolder = useMutation({
     mutationFn: async ({ parent, name }: { parent: string; name: string }) => {
-      const path = joinHostPath(parent, name);
+      const path = joinHostPath({ rootPath: parent, relativePath: name });
+      if (path === null) throw new Error("Invalid parent directory.");
       await sdk.files.mkdir({ hostId, path });
       return path;
     },
@@ -365,18 +365,56 @@ export function RemotePathBrowser({
                       className="size-3 shrink-0 opacity-50"
                     />
                   ) : null}
-                  <button
-                    type="button"
-                    disabled={interactionDisabled}
-                    className={cn(
-                      "rounded px-1 py-0.5 hover:bg-muted hover:text-foreground",
-                      index === crumbs.length - 1 &&
-                        "font-medium text-foreground",
-                    )}
-                    onClick={() => navigateTo(crumb.path)}
-                  >
-                    {crumb.label}
-                  </button>
+                  {index === 0 && roots.length > 1 ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        asChild
+                        disabled={interactionDisabled}
+                      >
+                        <button
+                          type="button"
+                          className={cn(
+                            "flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground",
+                            crumbs.length === 1 &&
+                              "font-medium text-foreground",
+                          )}
+                        >
+                          {crumb.label}
+                          <Icon
+                            name="ChevronDown"
+                            className="size-3 shrink-0 opacity-50"
+                          />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        mobileTitle="Drive"
+                        className="max-h-72 overflow-y-auto"
+                      >
+                        {roots.map((root) => (
+                          <DropdownMenuItem
+                            key={root}
+                            onSelect={() => navigateTo(root)}
+                          >
+                            {root}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={interactionDisabled}
+                      className={cn(
+                        "rounded px-1 py-0.5 hover:bg-muted hover:text-foreground",
+                        index === crumbs.length - 1 &&
+                          "font-medium text-foreground",
+                      )}
+                      onClick={() => navigateTo(crumb.path)}
+                    >
+                      {crumb.label}
+                    </button>
+                  )}
                 </span>
               ))}
             </div>

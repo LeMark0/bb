@@ -247,7 +247,9 @@ function buildTurnRequest(
   acceptedClientRequest: AcceptedClientRequest | undefined,
 ): EventProjectionTurnRequest {
   return {
-    isGrouped: decoded.inputGroups !== undefined,
+    isGrouped:
+      decoded.inputGroups !== undefined &&
+      decoded.inputGroups.length - (decoded.progressSenders?.length ?? 0) > 1,
     kind: resolveTurnRequestKind({
       acceptedClientRequest,
       decoded,
@@ -308,11 +310,14 @@ function buildClientUserMessage({
       ? acceptedClientRequest.meta
       : meta;
   const agentEnvelope = parseAgentMessageEnvelope(parsedInput.text);
+  const progressSenderThreadId = decoded.progressSenders?.[inputGroupIndex];
   const initiator =
-    decoded.initiator === "user" && agentEnvelope !== null
+    progressSenderThreadId !== undefined ||
+    (decoded.initiator === "user" && agentEnvelope !== null)
       ? "agent"
       : decoded.initiator;
   const senderThreadId =
+    progressSenderThreadId ??
     decoded.senderThreadId ??
     (initiator === "agent" ? (agentEnvelope?.senderThreadId ?? null) : null);
 
@@ -336,9 +341,22 @@ function buildClientUserMessage({
       : { scope: decoded.scope }),
     initiator,
     senderThreadId,
-    systemMessageKind: decoded.systemMessageKind ?? "unlabeled",
-    systemMessageSubject: decoded.systemMessageSubject ?? null,
+    systemMessageKind:
+      progressSenderThreadId !== undefined
+        ? "unlabeled"
+        : (decoded.systemMessageKind ?? "unlabeled"),
+    systemMessageSubject:
+      progressSenderThreadId !== undefined
+        ? null
+        : (decoded.systemMessageSubject ?? null),
     turnRequest,
+    ...(progressSenderThreadId === undefined
+      ? {}
+      : { progressNote: true as const }),
+    ...(decoded.target.kind === "thread-start" &&
+    acceptedClientRequest !== undefined
+      ? { acceptedTurnId: acceptedClientRequest.turnId }
+      : {}),
     text: parsedInput.text,
     mentions: parsedInput.mentions,
     attachments: buildAttachments(parsedInput),

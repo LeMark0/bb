@@ -1,5 +1,6 @@
 import { emitPluginEnvironmentRemoved } from "../plugins/plugin-thread-events.js";
 import { withHostCleanup } from "../hosts/cleanup-context.js";
+import { preservePathPluginsInside } from "../plugins/path-plugin-preservation.js";
 import { findHostDataDir } from "../lib/entity-lookup.js";
 import { getLatestThreadSequence, updateThread } from "@bb/db";
 import {
@@ -19,12 +20,13 @@ import {
   runEnvironmentHook,
   ENVIRONMENT_HOOK_TIMEOUT_MS,
 } from "./environment-hooks.js";
-import { eq, and, isNull, or, sql } from "drizzle-orm";
+import { eq, and, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   releaseFinishedEnvironmentPreparationOwners,
   environmentHasLiveThreads,
   environments,
+  environmentHookOperations,
   getEnvironment,
   getHost,
   getThread,
@@ -33,6 +35,7 @@ import {
   claimEnvironmentPath,
   bindEnvironmentPath,
   listProviderLifecycleEnvironments,
+  liveThread,
   updatePreparingEnvironment,
   type DbConnection,
   type DbTransaction,
@@ -41,6 +44,7 @@ import {
   type DbNotifier,
   type DbQueryConnection,
   threads,
+  markHostEnvironmentsDestroyed,
 } from "@bb/db";
 import {
   canonicalizeHostPath,
@@ -117,7 +121,11 @@ import {
 } from "../../internal/command-result-side-effects.js";
 import { errorMessage } from "../lib/error-log-fields.js";
 import { perDbRegistry } from "../lib/per-db-registry.js";
-import { isHostUnavailableApiError } from "../hosts/online-rpc.js";
+import {
+  callHostOnlineRpc,
+  isHostUnavailableApiError,
+} from "../hosts/online-rpc.js";
+import { ApiError } from "../../errors.js";
 
 type Deps = ThreadProvisioningDeps;
 
@@ -149,7 +157,7 @@ const createResultSchema = z.discriminatedUnion("status", [
     status: z.literal("created"),
     path: z.string().min(1),
     ownsPath: z.boolean().default(false),
-    mergeBaseBranch: z.string().min(1).optional(),
+    mergeBaseBranch: z.string().min(1).nullable().optional(),
     resource: resourceSchema.optional(),
   }),
   z.object({
@@ -305,6 +313,7 @@ function runTrackedOperation(args: {
 }
 
 const REMOVE_RETRY_MS = 60_000;
+const MAX_REMOVE_ATTEMPTS = 5;
 const PROVIDER_OWNER_MISMATCH_MESSAGE =
   "The environment provider belongs to a different plugin or has no recorded owner. Automatic removal is blocked.";
 const PROVIDER_LIFECYCLE_SWEEP_YIELD_INTERVAL = 25;
@@ -509,6 +518,8 @@ async function runCreate(
           if (!adoptedExistingEnvironment || !existingProviderOwnsLifecycle) {
             row.mergeBaseBranch = produced.mergeBaseBranch ?? null;
             row.resource = produced.resource ?? null;
+          } else if (produced.mergeBaseBranch !== undefined) {
+            row.mergeBaseBranch = produced.mergeBaseBranch;
           }
         },
       );
@@ -716,6 +727,9 @@ async function runRemove(
           signal,
         });
       }
+      if (row.providerOwnsPath && row.path !== null) {
+        await preservePathPluginsInside(deps.db, row.path);
+      }
       const invocation = await invokeEnvironmentProvider(
         record,
         "environment remove",
@@ -739,11 +753,7 @@ async function runRemove(
         throw new Error("The environment provider became unavailable.");
       const result = removeResultSchema.parse(invocation.value);
       if (result.status === "failed") {
-        writeEnvironment(deps, environmentId, {
-          teardownStatus: "failed",
-          teardownMessage: result.message,
-          retireAt: Date.now() + REMOVE_RETRY_MS,
-        });
+        writeEnvironmentTeardownFailure(deps, environmentId, result.message);
         return;
       }
       deps.db.transaction(() => {
@@ -767,13 +777,45 @@ async function runRemove(
         providerOwnedPath: row.providerOwnsPath,
       });
     } catch (error) {
-      writeEnvironment(deps, environmentId, {
-        teardownStatus: "failed",
-        teardownMessage: errorMessage(error),
-        retireAt: Date.now() + REMOVE_RETRY_MS,
-      });
+      writeEnvironmentTeardownFailure(deps, environmentId, errorMessage(error));
     }
   });
+}
+
+function writeEnvironmentTeardownFailure(
+  deps: Pick<Deps, "db" | "hub">,
+  environmentId: string,
+  message: string,
+): void {
+  const row = getEnvironment(deps.db, environmentId);
+  if (row === null) return;
+  const exhausted = row.teardownAttempt >= MAX_REMOVE_ATTEMPTS;
+  const written = deps.db
+    .update(environments)
+    .set({
+      teardownStatus: "failed",
+      teardownMessage: exhausted
+        ? `Needs recovery: ${message} Inspect the workspace, then run bb environment cleanup ${environmentId} --recover.`
+        : message,
+      retireAt: exhausted
+        ? null
+        : Date.now() +
+          REMOVE_RETRY_MS * 2 ** Math.max(0, row.teardownAttempt - 1),
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(
+        eq(environments.id, environmentId),
+        or(
+          isNull(environments.teardownStatus),
+          ne(environments.teardownStatus, "removed"),
+        ),
+      ),
+    )
+    .returning({ id: environments.id })
+    .all();
+  if (written.length > 0)
+    deps.hub.notifyEnvironment(environmentId, ["metadata-changed"]);
 }
 
 async function removeEnvironment(
@@ -854,6 +896,18 @@ async function sweepProviderEnvironmentInSlot(
       });
     return;
   }
+  if (row.teardownAttempt >= MAX_REMOVE_ATTEMPTS) {
+    if (
+      row.retireAt !== null ||
+      !row.teardownMessage?.startsWith("Needs recovery:")
+    )
+      writeEnvironmentTeardownFailure(
+        deps,
+        environmentId,
+        row.teardownMessage ?? "Cleanup did not complete.",
+      );
+    return;
+  }
   if (row.retireAt === null) {
     if (
       !cancelled &&
@@ -870,12 +924,6 @@ async function sweepProviderEnvironmentInSlot(
   }
   if (row.retireAt !== null && row.retireAt > now) return;
   if (!requestEnvironmentRemoval(deps, environmentId)) return;
-  if (cancelled && row.providerOwnsPath && row.path !== null) {
-    await cancelPendingEnvironmentHook(deps, {
-      id: `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`,
-      hostId: row.hostId,
-    });
-  }
   row = getEnvironment(deps.db, environmentId);
   if (row === null || row.teardownStatus === "removed") return;
   if (
@@ -894,13 +942,47 @@ async function sweepProviderEnvironmentInSlot(
     teardownAttempt: attempt,
     teardownMessage: null,
   });
-  await runRemove(
-    deps,
-    environmentId,
-    attempt,
-    row.teardownAttempt > 0,
-    signal,
-  );
+  try {
+    const setupOperation = deps.db
+      .select({ finishedAt: environmentHookOperations.finishedAt })
+      .from(environmentHookOperations)
+      .where(
+        eq(
+          environmentHookOperations.id,
+          `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`,
+        ),
+      )
+      .get();
+    const setupUnresolved =
+      (setupOperation !== undefined && setupOperation.finishedAt === null) ||
+      cancelled ||
+      ((row.status === "provisioning" || row.status === "error") &&
+        deps.db
+          .select({ id: environmentHookOperations.id })
+          .from(environmentHookOperations)
+          .where(
+            eq(
+              environmentHookOperations.id,
+              `environment:${row.id}:${row.environmentProviderInstanceKey}:teardown`,
+            ),
+          )
+          .get() === undefined);
+    if (setupUnresolved && row.providerOwnsPath && row.path !== null) {
+      await cancelPendingEnvironmentHook(deps, {
+        id: `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`,
+        hostId: row.hostId,
+      });
+    }
+    await runRemove(
+      deps,
+      environmentId,
+      attempt,
+      row.teardownAttempt > 0,
+      signal,
+    );
+  } catch (error) {
+    writeEnvironmentTeardownFailure(deps, environmentId, errorMessage(error));
+  }
 }
 
 export function cleanupEnvironment(deps: Deps, environmentId: string): boolean {
@@ -913,6 +995,12 @@ export function cleanupEnvironment(deps: Deps, environmentId: string): boolean {
   )
     return false;
   if (row.teardownStatus === "removed") return true;
+  if (row.teardownAttempt >= MAX_REMOVE_ATTEMPTS)
+    throw new ApiError(
+      409,
+      "invalid_request",
+      `Needs recovery. Inspect the workspace, then run bb environment cleanup ${environmentId} --recover.`,
+    );
   writeEnvironment(deps, environmentId, { retireAt: Date.now() });
   void sweepProviderEnvironment(deps, environmentId).catch((error) => {
     deps.logger.warn(
@@ -921,6 +1009,122 @@ export function cleanupEnvironment(deps: Deps, environmentId: string): boolean {
     );
   });
   return true;
+}
+
+export async function recoverEnvironmentCleanup(
+  deps: Deps,
+  environmentId: string,
+): Promise<void> {
+  const map = perDbRegistry(environmentOperations, deps.db);
+  if (map.has(environmentId))
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Environment cleanup is still running",
+    );
+  await runTrackedOperation({
+    kind: "remove",
+    map,
+    key: environmentId,
+    run: async (signal) => {
+      const row = getEnvironment(deps.db, environmentId);
+      if (
+        row === null ||
+        row.environmentProviderId === null ||
+        row.teardownStatus !== "failed" ||
+        environmentHasLiveThreads(deps.db, environmentId)
+      )
+        throw new ApiError(
+          409,
+          "invalid_request",
+          "Recovery requires a failed, unused provider-managed environment",
+        );
+      const workspacePath = row.providerOwnsPath ? row.path : null;
+      await withEnvironmentCleanupSlot(deps.db, row.hostId, async () => {
+        if (workspacePath !== null) {
+          const inspection = await callHostOnlineRpc(deps, {
+            hostId: row.hostId,
+            timeoutMs: 30_000,
+            command: {
+              type: "environment.inspect_cleanup",
+              environmentId,
+              path: workspacePath,
+            },
+          });
+          if (
+            !inspection.supported ||
+            inspection.active ||
+            inspection.pids.length > 0 ||
+            inspection.unreadablePids.length > 0
+          )
+            throw new ApiError(
+              409,
+              "invalid_request",
+              `Recovery refused: ${!inspection.supported ? "process inspection requires Linux" : inspection.active ? "setup or a hook is still running" : inspection.pids.length > 0 ? `workspace processes remain (${inspection.pids.join(", ")})` : `cannot inspect same-user processes (${inspection.unreadablePids.join(", ")})`}`,
+            );
+        }
+        const current = getEnvironment(deps.db, environmentId);
+        if (
+          current === null ||
+          current.path !== row.path ||
+          current.environmentProviderInstanceKey !==
+            row.environmentProviderInstanceKey ||
+          current.teardownStatus !== "failed" ||
+          environmentHasLiveThreads(deps.db, environmentId)
+        )
+          throw new ApiError(
+            409,
+            "invalid_request",
+            "Environment changed during recovery inspection; inspect it again",
+          );
+        deps.db.transaction(() => {
+          if (workspacePath !== null)
+            for (const kind of ["setup", "teardown"] as const) {
+              const id = `environment:${row.id}:${row.environmentProviderInstanceKey}:${kind}`;
+              const finishedAt = Date.now();
+              if (
+                kind === "teardown" &&
+                deps.db
+                  .select({ id: environmentHookOperations.id })
+                  .from(environmentHookOperations)
+                  .where(eq(environmentHookOperations.id, id))
+                  .get() === undefined
+              )
+                continue;
+              deps.db
+                .insert(environmentHookOperations)
+                .values({
+                  id,
+                  operationId: id,
+                  hostId: row.hostId,
+                  path: workspacePath,
+                  kind,
+                  startedAt: finishedAt,
+                  finishedAt,
+                  error:
+                    "Interrupted hook acknowledged by explicit cleanup recovery",
+                })
+                .onConflictDoUpdate({
+                  target: environmentHookOperations.id,
+                  set: {
+                    finishedAt,
+                    error:
+                      "Interrupted hook acknowledged by explicit cleanup recovery",
+                  },
+                  setWhere: isNull(environmentHookOperations.finishedAt),
+                })
+                .run();
+            }
+          writeEnvironment(deps, environmentId, {
+            teardownAttempt: 0,
+            retireAt: Date.now(),
+            teardownMessage: null,
+          });
+        });
+        await sweepProviderEnvironmentInSlot(deps, environmentId, signal);
+      });
+    },
+  }).done;
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -1121,8 +1325,7 @@ function listStopRequestedEnvironmentProvisionThreads(
       and(
         eq(threads.environmentId, environmentId),
         eq(threads.status, "stopping"),
-        isNull(threads.archivedAt),
-        isNull(threads.deletedAt),
+        liveThread,
       ),
     )
     .all();
@@ -1290,6 +1493,29 @@ function settleEnvironmentProvisionOutcome(
 ): CommandResultSideEffectsResult {
   const postCommitActions: CommandResultPostCommitAction[] = [];
   const initiator = args.command.initiator;
+  if (
+    args.command.setupScriptTimeoutMs !== null &&
+    (args.report.ok || args.report.errorCode === "setup_script_failed")
+  ) {
+    const environment = getEnvironment(
+      args.deps.db,
+      args.command.environmentId,
+    );
+    if (environment !== null)
+      args.deps.db
+        .update(environmentHookOperations)
+        .set({
+          finishedAt: Date.now(),
+          error: args.report.ok ? null : args.report.errorMessage,
+        })
+        .where(
+          eq(
+            environmentHookOperations.id,
+            `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`,
+          ),
+        )
+        .run();
+  }
   if (!initiator && !args.report.ok) {
     const outcome = applyLoggedEnvironmentLifecycleEventInTransaction(
       args.deps,
@@ -1600,10 +1826,60 @@ export async function resumeEnvironmentProvisioningForHost(
   }
 }
 
+export async function runTrackedEnvironmentAttach(
+  deps: CommandResultSideEffectsDeps,
+  args: {
+    hostId: string;
+    command: EnvironmentProvisionRequest["command"];
+    timeoutMs: number;
+  },
+): Promise<void> {
+  const operation = runTrackedOperation({
+    kind: "attach",
+    map: perDbRegistry(environmentOperations, deps.db),
+    key: args.command.environmentId,
+    run: async () => {
+      await runLiveHostCommand(deps, args);
+    },
+  });
+  await operation.done;
+}
+
 async function runEnvironmentProvisionCommand(
   deps: CommandResultSideEffectsDeps,
   args: StartTrackedEnvironmentProvisionCommandArgs,
 ): Promise<void> {
+  if (args.request.command.setupScriptTimeoutMs !== null) {
+    const environment = args.environment;
+    const id = `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`;
+    const existing = deps.db
+      .select({ finishedAt: environmentHookOperations.finishedAt })
+      .from(environmentHookOperations)
+      .where(eq(environmentHookOperations.id, id))
+      .get();
+    if (existing !== undefined && existing.finishedAt === null) {
+      interruptUnrecoverableEnvironmentProvisioning(deps, {
+        environmentId: environment.id,
+        reason: `An earlier setup has an unknown outcome. Archive its threads, inspect the workspace, then run bb environment cleanup ${environment.id} --recover.`,
+      });
+      return;
+    }
+    deps.db
+      .insert(environmentHookOperations)
+      .values({
+        id,
+        operationId: id,
+        hostId: environment.hostId,
+        path: args.request.command.path,
+        kind: "setup",
+        startedAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: environmentHookOperations.id,
+        set: { startedAt: Date.now(), finishedAt: null, error: null },
+      })
+      .run();
+  }
   const execution = createLiveHostCommandExecution(args.environment.hostId);
   await runLiveHostCommand(deps, {
     command: args.request.command,
@@ -1669,8 +1945,7 @@ function recoverEnvironmentProvisionRequest(
       and(
         eq(threads.environmentId, environment.id),
         eq(threads.status, "starting"),
-        isNull(threads.archivedAt),
-        isNull(threads.deletedAt),
+        liveThread,
       ),
     )
     .all();
@@ -1916,6 +2191,42 @@ export async function advanceEnvironmentProvisioning(
     run: () =>
       runEnvironmentProvisionCommand(deps, { environment: row, request }),
   });
+}
+
+export async function forgetHostEnvironments(
+  deps: Deps,
+  hostId: string,
+): Promise<void> {
+  const map = perDbRegistry(environmentOperations, deps.db);
+  const listRows = () =>
+    deps.db
+      .select({
+        id: environments.id,
+        path: environments.path,
+        providerOwnsPath: environments.providerOwnsPath,
+        status: environments.status,
+        teardownStatus: environments.teardownStatus,
+      })
+      .from(environments)
+      .where(eq(environments.hostId, hostId))
+      .all();
+  await Promise.all(
+    listRows().map((row) => map.get(row.id)?.done.catch(() => {})),
+  );
+  const pending = listRows().filter(
+    (row) => row.status !== "destroyed" || row.teardownStatus !== "removed",
+  );
+  markHostEnvironmentsDestroyed(deps.db, deps.hub, hostId);
+  const removedAt = Date.now();
+  for (const row of pending) {
+    emitPluginEnvironmentRemoved({
+      environmentId: row.id,
+      removedAt,
+      hostId,
+      path: row.path,
+      providerOwnedPath: row.providerOwnsPath,
+    });
+  }
 }
 
 export async function sweepProviderEnvironment(

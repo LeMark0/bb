@@ -13,6 +13,7 @@ Providers are agent backends (e.g., codex, claude-code). Each supports different
                                           List available providers
   bb provider models [providerId] [--machine <id-or-name> | --environment <id>]
                      [--project <id>]
+    [--selected-model <model-id>]
                                           List models for a provider
 
 Use these before spawning threads if you are unsure which provider or model to use.
@@ -47,8 +48,10 @@ tiers per model, in which case the model accepts every tier the provider
 lists). Pass a tier id to `--service-tier`; a tier the provider does not list
 is rejected.
 
-Model lists answer from the machine's last stored list while a background
-refresh runs, so a list can be hours old. A provider whose refresh keeps
+Model lists answer from the machine's last stored list. A request for a list
+more than a minute old starts a background refresh, and open model pickers
+update when it changes the list. The first request after a quiet period can
+therefore return a list that is hours old. A provider whose refresh keeps
 failing or timing out keeps answering from its last stored list.
 
 When no list can be served, bb provider models prints the failing provider,
@@ -77,9 +80,11 @@ threads use the next enabled provider in saved order, including in projects whos
 last-used provider is disabled. Explicit or existing-thread choices never
 silently switch.
 
-Provider-native memory can be controlled on the separate Settings → Providers
-→ Codex and Settings → Providers → Claude Code pages. Codex memory controls
-both recall (`memories.use_memories`) and future generation
+Provider-native memory can be controlled on the Settings → Plugins → Codex
+provider and Settings → Plugins → Claude Code provider pages, or with
+`bb plugin config provider-codex set memoryEnabled false` and
+`bb plugin config provider-claude-code set memoryEnabled false`. Codex memory
+controls both recall (`memories.use_memories`) and future generation
 (`memories.generate_memories`). Claude Code memory controls native auto-memory
 reads and writes (`autoMemoryEnabled`). Both preferences default on and apply
 when a provider thread is started, resumed, or forked; they do not interrupt
@@ -94,24 +99,32 @@ provider's global configuration.
 Codex can give selected threads a larger context window through the Codex
 provider setting `contextWindowOverrides`, a JSON object keyed by bb thread id
 whose entries name the model, `contextWindow` and an optional
-`autoCompactTokenLimit`. An entry applies only while that thread runs the named
-model; other threads, including children, reviewers, forks and side chats,
-keep the Codex defaults. bb applies a change at the thread's next turn by
-resuming the same Codex thread with the new values, and removing the entry
-returns it to the defaults the same way. Set it with
-`bb plugin config provider-codex set contextWindowOverrides '<json>'`; the Codex
-provider skill explains how to choose the values.
+`autoCompactTokenLimit`, or `null` to keep a thread on the defaults.
+`contextWindowPresets` takes the same entries keyed by Tasks preset id and
+covers threads started with `bb tasks dispatch` or `bb tasks preset spawn`
+from that preset. Forks and side chats inherit their source's decision; a
+thread entry wins over a preset entry, and an entry applies only while the
+thread runs the named model. Children, reviewers and threads started with
+`bb thread spawn` keep the Codex defaults unless a thread entry names them.
+bb applies a change at the thread's next turn by resuming the same Codex
+thread with the new values. Removing a thread's entry hands the decision back
+to its fork source or recorded preset, which may still give a larger window;
+`null` is the way to keep it on the defaults. Set either with
+`bb plugin config provider-codex set <setting> '<json>'`; the Codex provider
+skill explains how to choose the values.
 
 Claude Code's native Workflow tool can be disabled separately on its provider
 page. This preference also defaults off and applies to newly started, resumed,
 or forked provider sessions. Claude Code plugin settings (`disable1MContext`,
-`chromeEnabled`, `sandboxEnabled`) are set with
+`chromeEnabled`, `artifactsEnabled`, `sandboxEnabled`,
+`fullAccessApprovalsEnabled`, `commandDescriptionsEnabled`) are set with
 `bb plugin config provider-claude-code set <key> <value>` and documented in the
 claude-code-provider skill.
 
-Automatic retries after provider overloads and subscription-window limits
-come from the bundled Provider retry plugin (`bb provider-retry status`); see
-`bb guide plugins`. For a manual retry of a failed turn, use `bb thread retry`.
+Automatic retries after provider overloads, server or connection errors, and
+subscription-window limits come from the bundled Provider retry plugin
+(`bb provider-retry status`); see `bb guide plugins`. For a manual retry of a
+failed turn, use `bb thread retry`.
 
 Known ACP agents can appear automatically when their CLI is installed on the
 host. For example, opencode, omp, Grok Build's grok CLI, or Hermes' hermes CLI
@@ -147,3 +160,11 @@ Use top-level sharedSkillRoots for one provider-neutral skill collection. The
 user and project paths use the same relative-path rules. bb indexes these roots
 as read-only sources. It then injects the selected skills into all providers.
 The bb user and project roots keep higher precedence than matching shared roots.
+
+Use --selected-model to discover an unprobed model's reasoning choices and
+include a selected-only model; ACP probes only that model and caches the result.
+Each model reports reasoningDiscovery: unknown means its choices have not been
+discovered yet, and known with an empty supportedReasoningEfforts list means it
+has no selectable reasoning levels. Sending never waits for discovery. When the
+cached catalog lists a model without the thread's reasoning level, BB leaves
+reasoning out of the provider request and the agent keeps its own setting.

@@ -118,6 +118,10 @@
       "type": "registry:ui"
     },
     {
+      "name": "expandable-text",
+      "type": "registry:ui"
+    },
+    {
       "name": "form",
       "type": "registry:ui"
     },
@@ -139,6 +143,10 @@
     },
     {
       "name": "inline-rename-editor",
+      "type": "registry:ui"
+    },
+    {
+      "name": "inline-rename-presentation-cases",
       "type": "registry:ui"
     },
     {
@@ -174,11 +182,23 @@
       "type": "registry:ui"
     },
     {
+      "name": "overflow-fade",
+      "type": "registry:ui"
+    },
+    {
+      "name": "overlay-anchor",
+      "type": "registry:ui"
+    },
+    {
       "name": "overlay-trigger",
       "type": "registry:ui"
     },
     {
       "name": "pagination",
+      "type": "registry:ui"
+    },
+    {
+      "name": "pill",
       "type": "registry:ui"
     },
     {
@@ -226,6 +246,10 @@
       "type": "registry:ui"
     },
     {
+      "name": "rename-session-dialog",
+      "type": "registry:ui"
+    },
+    {
       "name": "resizable",
       "type": "registry:ui"
     },
@@ -258,10 +282,6 @@
       "type": "registry:ui"
     },
     {
-      "name": "resource-route-label",
-      "type": "registry:ui"
-    },
-    {
       "name": "resource-row",
       "type": "registry:ui"
     },
@@ -271,6 +291,14 @@
     },
     {
       "name": "responsive-overlay",
+      "type": "registry:ui"
+    },
+    {
+      "name": "schedule-time",
+      "type": "registry:lib"
+    },
+    {
+      "name": "schedule-time-fields",
       "type": "registry:ui"
     },
     {
@@ -287,6 +315,10 @@
     },
     {
       "name": "sheet",
+      "type": "registry:ui"
+    },
+    {
+      "name": "shortcut-pill",
       "type": "registry:ui"
     },
     {
@@ -315,6 +347,10 @@
     },
     {
       "name": "sortable-motion",
+      "type": "registry:ui"
+    },
+    {
+      "name": "split-pane-mini-map",
       "type": "registry:ui"
     },
     {
@@ -347,6 +383,10 @@
     },
     {
       "name": "tooltip",
+      "type": "registry:ui"
+    },
+    {
+      "name": "truncate-start",
       "type": "registry:ui"
     },
     {
@@ -384,6 +424,14 @@
     {
       "name": "utils",
       "type": "registry:lib"
+    },
+    {
+      "name": "video",
+      "type": "registry:ui"
+    },
+    {
+      "name": "video-thumbnail",
+      "type": "registry:ui"
     },
     {
       "name": "voice-input-textarea",

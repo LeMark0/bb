@@ -26,10 +26,11 @@ For task dispatch and execution presets, read
    `bb tasks show ABC-12 --json` when the result will drive commands or code.
 
    For project-wide discovery, `bb tasks list` returns at most 100 rows by
-   default. Pass `--limit 1-500`; in JSON, continue with `nextCursor` via the
-   same filters/sort and `--cursor <value>` (human output prints the exact
-   continuation option). A task-list mutation makes an old cursor stale, so
-   restart without it.
+   default. `--sort created` and `--sort updated` list the newest tasks first
+   by creation or last change. Pass `--limit 1-500`; in JSON, continue with
+   `nextCursor` via the same filters/sort and `--cursor <value>` (human output
+   prints the exact continuation option). A task-list mutation makes an old
+   cursor stale, so restart without it.
 
 2. Fetch every relevant attachment before making assumptions about it:
 

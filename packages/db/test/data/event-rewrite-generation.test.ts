@@ -38,6 +38,7 @@ function setup() {
   });
   const createCodexThread = () =>
     createThread(db, noopNotifier, {
+      status: "idle",
       projectId: project.id,
       providerId: "codex",
     }).id;
@@ -120,6 +121,7 @@ function taskProgress(threadId: string, sequence: number): InsertEventInput {
         description: "fixture workflow",
         id: "task:wf-1",
         skipTranscript: false,
+        foreground: false,
         status: "pending",
         taskStatus: "running",
         taskType: "local_workflow",

@@ -53,6 +53,7 @@ function commandRow(
     callId: `${id}-call`,
     command,
     cwd: null,
+    description: null,
     source: null,
     output: "",
     exitCode: null,

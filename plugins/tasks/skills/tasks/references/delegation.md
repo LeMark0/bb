@@ -16,3 +16,22 @@ bb tasks preset create --name "Codex high" --provider codex \
 
 `preset update` accepts the same flags; `--clear-service-tier` clears a tier.
 Do not combine it with `--service-tier`; `none` is a literal tier id.
+
+To start a thread from a preset without a task, use `preset spawn`. It uses
+the preset's provider, model and environment, and accepts `--reasoning`,
+`--service-tier` and `--permission` overrides for this thread only. Pass the
+first message with `--prompt` or `--prompt-file`, read on the invoking
+machine (or `--machine`) with trailing newlines dropped, as
+`bb thread spawn --prompt-file` does. The preset's instructions are not added:
+
+```sh
+bb tasks preset spawn "Codex high" --project proj_abc234defg \
+  --environment env_abc234defg --title "Release coordination" \
+  --prompt-file brief.md --json
+```
+
+Both `bb tasks dispatch` and `preset spawn` record the preset's id on the
+thread they create, as Tasks plugin metadata `presetId`. Providers can key
+settings on it; the Codex provider's `contextWindowPresets` does. A thread
+started with `bb thread spawn` records no preset, even with a preset's
+instructions in its prompt.

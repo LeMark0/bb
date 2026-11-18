@@ -4,22 +4,21 @@
   "main": "./src/worker.ts",
   "account_id": "7bb84c630057dafa53e2aacbe6bd094f",
   "compatibility_date": "2026-06-11",
-  "compatibility_flags": ["global_fetch_strictly_public"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "observability": { "enabled": true },
   "vars": {
     "AI_DAILY_BUDGET_MICROS": "500000",
-    "AI_MODELS": "google/gemini-2.5-flash-lite,inception/mercury-2.5",
+    "AI_MODELS": "google/gemini-3.1-flash-lite,inception/mercury-2.5",
     "AI_TRANSCRIBE_MODELS": "microsoft/mai-transcribe-2,openai/whisper-large-v3-turbo",
     "AI_UPSTREAM_BASE_URL": "https://openrouter.ai/api/v1",
   },
   "secrets": { "required": ["OPENROUTER_API_KEY"] },
-  "d1_databases": [
+  "hyperdrive": [
     {
-      "binding": "DB",
-      "database_name": "bb-connect-prod",
-      "database_id": "5e37a076-93e9-4dcf-933f-761c22f7cf8b",
-      "migrations_dir": "../../packages/connect-db/migrations",
+      "binding": "HYPERDRIVE",
+      "id": "1645c9edadb74b8cb593218030fac7f2",
+      "localConnectionString": "postgresql://bb:bb@localhost:5432/bb_connect",
     },
   ],
   "ratelimits": [
@@ -36,17 +35,16 @@
       "workers_dev": false,
       "vars": {
         "AI_DAILY_BUDGET_MICROS": "500000",
-        "AI_MODELS": "google/gemini-2.5-flash-lite,inception/mercury-2.5",
+        "AI_MODELS": "google/gemini-3.1-flash-lite,inception/mercury-2.5",
         "AI_TRANSCRIBE_MODELS": "microsoft/mai-transcribe-2,openai/whisper-large-v3-turbo",
         "AI_UPSTREAM_BASE_URL": "https://openrouter.ai/api/v1",
       },
       "secrets": { "required": ["OPENROUTER_API_KEY"] },
-      "d1_databases": [
+      "hyperdrive": [
         {
-          "binding": "DB",
-          "database_name": "bb-connect-staging",
-          "database_id": "1aaa5562-457d-43a7-b11f-18b4f19bd62c",
-          "migrations_dir": "../../packages/connect-db/migrations",
+          "binding": "HYPERDRIVE",
+          "id": "c4123f16fa6d4ef084d4531996012f1b",
+          "localConnectionString": "postgresql://bb:bb@localhost:5432/bb_connect",
         },
       ],
       "ratelimits": [

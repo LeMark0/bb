@@ -151,9 +151,11 @@ function nonEmpty(text: string | null | undefined): string | null {
 function rowIntent(row: TimelineWorkRow): string | null {
   const presentation = presentationOf(row);
   if (row.workKind === "command") {
-    return nonEmpty(presentation?.detail) === null
-      ? null
-      : nonEmpty(presentation?.title);
+    const legacyIntent =
+      nonEmpty(presentation?.detail) === null
+        ? null
+        : nonEmpty(presentation?.title);
+    return nonEmpty(row.description) ?? legacyIntent;
   }
   if (row.workKind === "delegation") {
     return nonEmpty(presentation?.title) ?? nonEmpty(row.description);

@@ -20,6 +20,7 @@ const commandRow: TimelineRow = {
   callId: "call-1",
   command: "pnpm exec turbo run test",
   cwd: null,
+  description: null,
   source: null,
   output: "",
   exitCode: null,

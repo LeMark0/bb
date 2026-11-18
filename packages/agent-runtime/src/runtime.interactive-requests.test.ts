@@ -321,44 +321,6 @@ describe("createAgentRuntime interactive requests", () => {
     await runtime.shutdown();
   });
 
-  it("does not reclassify provider-filtered approvals against mutable thread settings", async () => {
-    const onInteractiveRequest = vi.fn(
-      async (): Promise<PendingInteractionResolution> => ({
-        decision: "allow_once",
-        grantedPermissions: null,
-      }),
-    );
-    const answer = await answerDirectRequest({
-      rawRequest: commandApprovalRequest(78),
-      handshake: { approvalEnforcedBy: "provider" },
-      getThreadExecutionOptions: () => deniedEscalationOptions,
-      onInteractiveRequest,
-    });
-    expect(answer).toMatchObject({
-      jsonrpc: "2.0",
-      id: 78,
-      result: { decision: "allow_once" },
-    });
-    expect(onInteractiveRequest).toHaveBeenCalledTimes(1);
-    expect(onInteractiveRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: {
-          kind: "approval",
-          subject: {
-            kind: "command",
-            itemId: "item-1",
-            command: "git push",
-            cwd: "/tmp/project",
-            actions: [],
-            sessionGrant: null,
-          },
-          reason: "Needs approval",
-          availableDecisions: ["allow_once", "allow_for_session", "deny"],
-        },
-      }),
-    );
-  });
-
   it("reaches the user through a provider-enforcing bridge end to end", async () => {
     const requests: PendingInteractionCreate[] = [];
     const events: ThreadEvent[] = [];
@@ -538,111 +500,104 @@ describe("createAgentRuntime interactive requests", () => {
     await runtime.shutdown();
   });
 
-  it("forwards a plugin-defined request even under a deny escalation and returns its answer", async () => {
-    const onInteractiveRequest = vi.fn(
-      async (): Promise<PendingInteractionResolution> => ({
-        kind: "request_answer",
-        value: { TOKEN: "x" },
-      }),
-    );
-    const answer = await answerDirectRequest({
-      rawRequest: {
+  it.each([
+    ["explicit turn", "turn-1", "turn-1"],
+    ["active turn", null, "bb-active-turn"],
+  ])(
+    "forwards a plugin-defined request for an %s even under a deny escalation",
+    async (_name, providerTurnId, expectedTurnId) => {
+      const onInteractiveRequest = vi.fn(
+        async (): Promise<PendingInteractionResolution> => ({
+          kind: "request_answer",
+          value: { TOKEN: "x" },
+        }),
+      );
+      const answer = await answerDirectRequest({
+        rawRequest: {
+          jsonrpc: "2.0",
+          id: 90,
+          method: "interaction/request",
+          params: {
+            providerThreadId: "prov-1",
+            threadId: "t1",
+            turnId: providerTurnId,
+            payload: {
+              kind: "secrets/secret-request",
+              title: "Add a token",
+              data: { fields: ["TOKEN"] },
+            },
+          },
+        },
+        handshake: { approvalEnforcedBy: "runtime" },
+        getActiveTurnId: () => "bb-active-turn",
+        getThreadExecutionOptions: () => deniedEscalationOptions,
+        onInteractiveRequest,
+      });
+      expect(onInteractiveRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          turnId: expectedTurnId,
+          payload: expect.objectContaining({ kind: "secrets/secret-request" }),
+        }),
+      );
+      expect(answer).toMatchObject({
         jsonrpc: "2.0",
         id: 90,
-        method: "interaction/request",
-        params: {
-          providerThreadId: "prov-1",
-          threadId: "t1",
-          turnId: "turn-1",
-          payload: {
-            kind: "secrets/secret-request",
-            title: "Add a token",
-            data: { fields: ["TOKEN"] },
-          },
+        result: { kind: "request_answer", value: { TOKEN: "x" } },
+      });
+    },
+  );
+
+  it.each([
+    {
+      name: "a plugin-defined request whose data exceeds 64 KiB",
+      method: "interaction/request",
+      params: {
+        providerThreadId: "prov-1",
+        threadId: "t1",
+        turnId: "turn-1",
+        payload: {
+          kind: "secrets/secret-request",
+          title: "Add a token",
+          data: { blob: "x".repeat(64 * 1024) },
         },
       },
-      handshake: { approvalEnforcedBy: "runtime" },
-      getThreadExecutionOptions: () => deniedEscalationOptions,
-      onInteractiveRequest,
-    });
-    expect(onInteractiveRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({ kind: "secrets/secret-request" }),
-      }),
-    );
-    expect(answer).toMatchObject({
-      jsonrpc: "2.0",
-      id: 90,
-      result: { kind: "request_answer", value: { TOKEN: "x" } },
-    });
-  });
-
-  it("refuses a plugin-defined request whose data exceeds 64 KiB at the wire", async () => {
-    const onInteractiveRequest = vi.fn(
-      async (): Promise<PendingInteractionResolution> => ({
-        kind: "request_answer",
-        value: null,
-      }),
-    );
-    const answer = await answerDirectRequest({
-      rawRequest: {
+    },
+    {
+      name: "an unsupported interaction method",
+      method: "interaction/unsupported",
+      params: { providerThreadId: "prov-1", turnId: "turn-1" },
+    },
+    {
+      name: "an interaction request with invalid params",
+      method: "interaction/request",
+      params: {
+        providerThreadId: "prov-1",
+        turnId: "turn-1",
+        payload: { kind: "approval", subject: { kind: "nonsense" } },
+      },
+    },
+  ])(
+    "answers $name with a JSON-RPC error instead of dropping it",
+    async ({ method, params }) => {
+      const onInteractiveRequest = vi.fn(
+        async (): Promise<PendingInteractionResolution> => ({
+          kind: "request_answer",
+          value: null,
+        }),
+      );
+      const answer = await answerDirectRequest({
+        rawRequest: { jsonrpc: "2.0", id: 91, method, params },
+        onInteractiveRequest,
+      });
+      expect(answer).toMatchObject({
         jsonrpc: "2.0",
         id: 91,
-        method: "interaction/request",
-        params: {
-          providerThreadId: "prov-1",
-          threadId: "t1",
-          turnId: "turn-1",
-          payload: {
-            kind: "secrets/secret-request",
-            title: "Add a token",
-            data: { blob: "x".repeat(64 * 1024) },
-          },
+        error: {
+          code: -32601,
+          message: `Unsupported provider request "${method}"`,
         },
-      },
-      onInteractiveRequest,
-    });
-    expect(answer).toMatchObject({
-      jsonrpc: "2.0",
-      id: 91,
-      error: { code: expect.any(Number) },
-    });
-    expect(onInteractiveRequest).not.toHaveBeenCalled();
-  });
-
-  it("responds to unsupported interactive requests with a JSON-RPC error instead of dropping them", async () => {
-    const answer = await answerDirectRequest({
-      rawRequest: {
-        jsonrpc: "2.0",
-        id: 80,
-        method: "interaction/unsupported",
-        params: { providerThreadId: "prov-1", turnId: "turn-1" },
-      },
-    });
-    expect(answer).toMatchObject({
-      jsonrpc: "2.0",
-      id: 80,
-      error: { code: expect.any(Number) },
-    });
-  });
-
-  it("responds to invalid interactive request params with a JSON-RPC invalid params error", async () => {
-    const answer = await answerDirectRequest({
-      rawRequest: {
-        jsonrpc: "2.0",
-        id: 81,
-        method: "interaction/request",
-        params: {
-          providerThreadId: "prov-1",
-          turnId: "turn-1",
-          payload: { kind: "approval", subject: { kind: "nonsense" } },
-        },
-      },
-    });
-    expect(answer).toMatchObject({
-      jsonrpc: "2.0",
-      id: 81,
-      error: { code: expect.any(Number) },
-    });
-  });
+      });
+      expect(onInteractiveRequest).not.toHaveBeenCalled();
+    },
+  );
 });

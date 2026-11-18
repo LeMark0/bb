@@ -7,7 +7,12 @@ import {
   noopNotifier,
   type DbConnection,
 } from "../src/index.js";
-import { rewindQueuedMessageStateMigration } from "./helpers/rewind.js";
+import {
+  dropThreadParentNotificationsColumn,
+  dropQueuedMessageDeliveryColumns,
+  dropThreadStatusChangedAtColumn,
+  rewindQueuedMessageStateMigration,
+} from "./helpers/rewind.js";
 
 interface LegacyQueuedRow {
   id: string;
@@ -53,6 +58,9 @@ function rewoundDatabase(): { db: DbConnection; threadId: string } {
     status: "idle",
   });
   rewindQueuedMessageStateMigration(db);
+  dropThreadParentNotificationsColumn(db);
+  dropQueuedMessageDeliveryColumns(db);
+  dropThreadStatusChangedAtColumn(db);
   return { db, threadId: thread.id };
 }
 

@@ -79,6 +79,7 @@ function backgroundTaskData(status: "pending" | "completed"): string {
       status,
       taskStatus: status === "pending" ? "running" : "completed",
       skipTranscript: false,
+      foreground: false,
       workflowName: "long-workflow",
     },
   });
@@ -413,6 +414,8 @@ function buildPage(
     responseByteBudget,
     includeClearedContextHistory: false,
     includeDiagnosticOperations: false,
+    compactionOfferEnabled: false,
+    summarizeShellCommands: true,
     includeNestedRows,
     maxInlineOutputChars: 32_000,
     maxSeq: 0,
@@ -435,6 +438,8 @@ function buildNestedPage(
     responseByteBudget,
     includeClearedContextHistory: false,
     includeDiagnosticOperations: false,
+    compactionOfferEnabled: false,
+    summarizeShellCommands: true,
     includeNestedRows: true,
     maxInlineOutputChars: 32_000,
     maxSeq: 0,
@@ -838,6 +843,7 @@ describe("in-turn timeline windows", () => {
     const details = buildTimelineTurnSummaryDetails(db, thread, {
       completedTurnDisplay: "collapse",
       includeDiagnosticOperations: false,
+      summarizeShellCommands: true,
       sourceSeqEnd: turnRow.sourceSeqEnd,
       sourceSeqStart: turnRow.sourceSeqStart,
       turnId: turnRow.turnId,
@@ -940,7 +946,6 @@ describe("in-turn timeline windows", () => {
     const budgeted = buildPage(db, thread, 100, null);
 
     expect(budgeted.response.timelinePage.olderCursor).toBeNull();
-    expect(budgeted.response.timelinePage.olderCursor).toBeNull();
     expect(budgeted.response.rows).toEqual(
       buildPage(db, thread, LARGE_BUDGET, null).response.rows,
     );
@@ -980,6 +985,7 @@ describe("in-turn timeline windows", () => {
         const details = buildTimelineTurnSummaryDetails(db, thread, {
           completedTurnDisplay: "collapse",
           includeDiagnosticOperations: false,
+          summarizeShellCommands: true,
           sourceSeqEnd: row.sourceSeqEnd,
           sourceSeqStart: row.sourceSeqStart,
           turnId: row.turnId,
@@ -1106,6 +1112,7 @@ describe("in-turn timeline windows", () => {
       itemId: null,
       completedTurnDisplay: "collapse",
       includeDiagnosticOperations: false,
+      summarizeShellCommands: true,
       sourceSeqEnd: turnRow.sourceSeqEnd,
       sourceSeqStart: turnRow.sourceSeqStart,
       turnId: turnRow.turnId,
@@ -1164,6 +1171,7 @@ describe("in-turn timeline windows", () => {
         const details = buildTimelineTurnSummaryDetails(db, thread, {
           completedTurnDisplay: "collapse",
           includeDiagnosticOperations: false,
+          summarizeShellCommands: true,
           sourceSeqEnd: row.sourceSeqEnd,
           sourceSeqStart: row.sourceSeqStart,
           turnId: row.turnId,
@@ -1210,7 +1218,6 @@ describe("in-turn timeline windows", () => {
     ]);
 
     const latest = buildPage(db, thread, LARGE_BUDGET, null);
-    expect(latest.response.timelinePage.olderCursor).toBeNull();
     expect(latest.response.timelinePage.olderCursor).toBeNull();
     expect(latest.response.rows).toHaveLength(1);
     const row = latest.response.rows[0]!;
@@ -1433,6 +1440,7 @@ describe("in-turn timeline windows", () => {
       itemId: delegation.callId,
       completedTurnDisplay: "collapse",
       includeDiagnosticOperations: false,
+      summarizeShellCommands: true,
       sourceSeqEnd: delegation.sourceSeqEnd,
       sourceSeqStart: delegation.sourceSeqStart,
       turnId: delegation.turnId ?? "",
@@ -1461,6 +1469,7 @@ describe("in-turn timeline windows", () => {
     const walked = buildTimelineTurnSummaryDetails(db, thread, {
       completedTurnDisplay: "collapse",
       includeDiagnosticOperations: false,
+      summarizeShellCommands: true,
       sourceSeqEnd: nestedDelegation.sourceSeqEnd,
       sourceSeqStart: nestedDelegation.sourceSeqStart,
       turnId: nestedDelegation.turnId ?? "",
@@ -1522,6 +1531,7 @@ describe("in-turn timeline windows", () => {
         const details = buildTimelineTurnSummaryDetails(db, thread, {
           completedTurnDisplay: "collapse",
           includeDiagnosticOperations: false,
+          summarizeShellCommands: true,
           sourceSeqEnd: row.sourceSeqEnd,
           sourceSeqStart: row.sourceSeqStart,
           turnId: row.turnId,
@@ -1675,7 +1685,6 @@ describe("timeline window hints", () => {
     const timeline = buildPage(db, thread, 1_501, null).response;
 
     expect(timeline.timelinePage.olderCursor).toBeNull();
-    expect(timeline.timelinePage.olderCursor).toBeNull();
     expect(timeline.rows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1729,7 +1738,6 @@ describe("timeline window hints", () => {
       latest.timelinePage.olderCursor,
       1,
     ).response;
-    expect(older.timelinePage.olderCursor).toBeNull();
     expect(older.timelinePage.olderCursor).toBeNull();
     expect(older.rows).toEqual([
       expect.objectContaining({
@@ -2016,6 +2024,8 @@ describe("timeline inline output reads", () => {
       eventBudget: LARGE_BUDGET,
       includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: false,
       maxInlineOutputChars: 32_000,
       maxSeq: 0,
@@ -2026,6 +2036,8 @@ describe("timeline inline output reads", () => {
       eventBudget: LARGE_BUDGET,
       includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: false,
       maxInlineOutputChars: null,
       maxSeq: 0,
@@ -2327,6 +2339,7 @@ function collectTurnDetailsAndChildren(
       details: buildTimelineTurnSummaryDetails(db, thread, {
         completedTurnDisplay: "collapse",
         includeDiagnosticOperations: false,
+        summarizeShellCommands: true,
         sourceSeqEnd: row.sourceSeqEnd,
         sourceSeqStart: row.sourceSeqStart,
         turnId: row.turnId,
@@ -2404,6 +2417,8 @@ describe("turn details for an item that finishes in a later turn", () => {
       eventBudget: LARGE_BUDGET,
       includeClearedContextHistory: false,
       includeDiagnosticOperations: false,
+      compactionOfferEnabled: false,
+      summarizeShellCommands: true,
       includeNestedRows: true,
       maxInlineOutputChars: 32_000,
       maxSeq: 0,
@@ -2475,6 +2490,7 @@ describe("turn details for an item that finishes in a later turn", () => {
       buildTimelineTurnSummaryDetails(db, thread, {
         completedTurnDisplay: "collapse",
         includeDiagnosticOperations: false,
+        summarizeShellCommands: true,
         sourceSeqEnd: olderTurn.sourceSeqEnd,
         sourceSeqStart: olderTurn.sourceSeqStart,
         turnId,

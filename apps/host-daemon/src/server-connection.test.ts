@@ -24,11 +24,13 @@ interface CreateWebSocketFixtureArgs {
 }
 
 interface ConnectionFixtureArgs extends CreateServerClientFixtureArgs {
+  onIdleProviderSessionTimeout?: (minutes: number) => void;
   autoReconnect?: boolean;
   serverHeaders?: Record<string, string>;
   protocolSelfUpdater?: ProtocolSelfUpdater;
   onSelfUpdateInstalled?: () => void | Promise<void>;
   onMachineShutdown?: () => void | Promise<void>;
+  onInteractiveRequestsEnded?: ServerConnectionOptions["onInteractiveRequestsEnded"];
   onServerMoved?: (notice: ServerMovedNotice) => Promise<void>;
   onMachineEnvironment?: (
     environment: HostDaemonSessionOpenResponse["machineEnvironment"],
@@ -56,9 +58,12 @@ function createSession(args: CreateSessionArgs): HostDaemonSessionOpenResponse {
   return {
     heartbeatIntervalMs: args.heartbeatIntervalMs,
     machineEnvironment: { revision: 0, entries: [] },
+    idleProviderSessionTimeoutMinutes: 30,
     leaseTimeoutMs: args.leaseTimeoutMs,
     retiredEnvironmentIds: [],
+    endedInteractiveRequests: [],
     connectShares: { generation: 0, ports: [] },
+    connectNext: { generation: 0, config: null },
     pluginHostGenerations: [],
     sessionId: args.sessionId,
     watchSet: {
@@ -93,7 +98,8 @@ function createServerClientFixture(args: CreateServerClientFixtureArgs = {}) {
   const serverClient = {
     openSession,
     fetchProjectAttachment: unused,
-    fetchSkillTree: unused,
+    fetchSkillTreeManifest: unused,
+    fetchSkillTreeContent: unused,
     fetchPluginHostArtifact: unused,
     postEvents: unused,
     callTool: unused,
@@ -189,8 +195,10 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
     protocolSelfUpdater: args.protocolSelfUpdater,
     onSelfUpdateInstalled: args.onSelfUpdateInstalled,
     onMachineShutdown: args.onMachineShutdown,
+    onInteractiveRequestsEnded: args.onInteractiveRequestsEnded,
     onServerMoved: args.onServerMoved,
     onMachineEnvironment: args.onMachineEnvironment,
+    onIdleProviderSessionTimeout: args.onIdleProviderSessionTimeout,
     onHostRpcCancel: args.onHostRpcCancel,
     startupTimeoutMs: args.startupTimeoutMs,
     setSession,
@@ -212,6 +220,34 @@ afterEach(() => {
 });
 
 describe("ServerConnection", () => {
+  it("applies the idle timeout on connection, live changes and reconnect", async () => {
+    const onIdleProviderSessionTimeout = vi.fn();
+    const { connection, webSocket } = createConnectionFixture({
+      onIdleProviderSessionTimeout,
+      sessionIds: ["first", "second"],
+    });
+    try {
+      await connection.start();
+      expect(onIdleProviderSessionTimeout).toHaveBeenLastCalledWith(30);
+      const socket = webSocket.sockets[0];
+      if (!socket) throw new Error("Expected test socket");
+      for (const minutes of [5, 0, 60]) {
+        socket.onmessage?.({
+          data: JSON.stringify({
+            type: "provider-session-policy.replace",
+            idleProviderSessionTimeoutMinutes: minutes,
+          }),
+        });
+        expect(onIdleProviderSessionTimeout).toHaveBeenLastCalledWith(minutes);
+      }
+      socket.reconnect();
+      await vi.waitFor(() => expect(connection.sessionId).toBe("second"));
+      expect(onIdleProviderSessionTimeout).toHaveBeenLastCalledWith(30);
+    } finally {
+      await connection.shutdown();
+    }
+  });
+
   it("applies initial and replacement machine environments, ignores stale updates and resets revisions after reconnect", async () => {
     const onMachineEnvironment = vi.fn();
     const { connection, webSocket } = createConnectionFixture({
@@ -269,6 +305,38 @@ describe("ServerConnection", () => {
 
     await vi.waitFor(() => {
       expect(onMachineShutdown).toHaveBeenCalledOnce();
+    });
+    await connection.shutdown();
+  });
+
+  it("hands ended provider questions to the registry", async () => {
+    const onInteractiveRequestsEnded = vi.fn();
+    const { connection, webSocket } = createConnectionFixture({
+      onInteractiveRequestsEnded,
+    });
+    await connection.start();
+    const socket = webSocket.sockets[0];
+    if (!socket) throw new Error("Expected test socket");
+    const request = {
+      threadId: "thr_ended",
+      providerId: "claude-code",
+      providerThreadId: "provider-thr-ended",
+      providerRequestId: "request-ended",
+    };
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "interactive-requests.end",
+        requests: [request],
+        reason: "closed on the server",
+      }),
+    });
+
+    await vi.waitFor(() => {
+      expect(onInteractiveRequestsEnded).toHaveBeenCalledWith({
+        reason: "closed on the server",
+        requests: [request],
+      });
     });
     await connection.shutdown();
   });

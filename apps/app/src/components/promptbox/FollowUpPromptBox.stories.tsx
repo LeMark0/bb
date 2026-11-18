@@ -1,3 +1,4 @@
+import "../../../.ladle/composer-plugin";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   Environment,
@@ -6,14 +7,12 @@ import type {
   PromptMentionResource,
   PromptTextMention,
   ThreadQueuedMessage,
-  WorkspaceStatus,
 } from "@bb/domain";
 import { makeThreadQueuedMessage } from "@bb/test-helpers/domain-fixtures";
 import {
   formatEnvironmentDisplay,
   type EnvironmentDisplayHostContext,
 } from "@bb/core-ui";
-import { EMPTY_ORDERED_MENTION_SUGGESTIONS } from "@bb/client-core";
 import type {
   SystemExecutionOptionsModelLoadError,
   ThreadContextWindowUsage,
@@ -30,12 +29,10 @@ import {
   findEnvironmentDisplayProvider,
   getEnvironmentSummaryChrome,
 } from "@/lib/environment-workspace-display";
-import {
-  INERT_TYPEAHEAD_COMMAND_CONFIG,
-  type AttachmentsConfig,
-  type PromptBoxAction,
-  type TypeaheadConfig,
-} from "@/components/promptbox/PromptBoxInternal";
+import type {
+  AttachmentsConfig,
+  PromptBoxAction,
+} from "@/components/promptbox/ComposerBox";
 import { ThreadPromptContextBanner } from "@/components/promptbox/banner/ThreadPromptContextBanner";
 import type {
   QueuedMessageEditRequest,
@@ -43,17 +40,23 @@ import type {
 } from "@/components/promptbox/banner/LazyQueuedMessagesList";
 import { QueuedMessagesList } from "@/components/promptbox/banner/QueuedMessagesList";
 import { ThreadEnvironmentSummary } from "@/components/promptbox/ThreadEnvironmentSummary";
+import type { CompactBeforeSendOffer } from "@/components/promptbox/CompactBeforeSendChip";
 import {
   formatWorkspaceCheckoutDisplay,
   type WorkspaceCheckoutDisplay,
-} from "@/lib/workspace-checkout-display";
+} from "@bb/shared-ui/lib/workspace-checkout-display";
 import type { PickerOption } from "@/components/pickers/OptionPicker";
-import { selectWorkspaceChangedFilesSection } from "@/components/workspace/workspace-change-summary";
+import { selectWorkspaceChangedFilesSection } from "../../../../../plugins/git/ui/workspace-change-summary";
 import { StoryCard, StoryRow } from "../../../.ladle/story-card";
+import {
+  GitSegmentFixtureProvider,
+  gitSegmentFixtureMergeBase,
+} from "@/test/fixtures/git-segment-plugin";
 import { ModelPickerStoryQueryProvider } from "../../../.ladle/model-picker-query-provider";
 import {
   makeEnvironment,
   makeExecutionControlsProps,
+  makeTypeaheadConfig,
   useInteractiveExecutionControls,
   STORY_ENVIRONMENT_PROVIDERS,
   PROJECT_NAMES,
@@ -64,14 +67,20 @@ import type {
   ExecutionPermissionConfig,
 } from "@/components/promptbox/ExecutionControls";
 import { PageShell } from "@/components/ui/page-shell.js";
-import { promptDraftToInput, type PromptDraftState } from "@bb/client-core";
-import { queuedInputToDraft } from "@bb/client-core";
+import {
+  buildFollowUpSubmitMode,
+  promptDraftToInput,
+  type PromptDraftState,
+  queuedInputToDraft,
+} from "@bb/client-core";
+import type { WorkspaceStatus } from "bb-plugin-bb--git/contract";
 
 export default {
   title: "promptbox/Follow Up Prompt Box",
 };
 
 const noop = () => {};
+const noopAsync = async () => {};
 const STORY_BRANCH_NAME = "bb/design-system-polish";
 
 const baseExecution = makeExecutionControlsProps({
@@ -281,16 +290,7 @@ const usage: ThreadContextWindowUsage = {
   estimated: false,
 };
 
-const typeaheadBase: TypeaheadConfig = {
-  mention: {
-    results: EMPTY_ORDERED_MENTION_SUGGESTIONS,
-    isLoading: false,
-    isRefreshing: false,
-    isError: false,
-    onQueryChange: noop,
-  },
-  command: INERT_TYPEAHEAD_COMMAND_CONFIG,
-};
+const typeaheadBase = makeTypeaheadConfig();
 
 const attachmentsBase: AttachmentsConfig = {
   items: [],
@@ -420,58 +420,72 @@ const dirtyWorkspaceStatus: WorkspaceStatus = {
     headSha: null,
   },
   mergeBase: null,
+  allChanges: {
+    insertions: 128,
+    deletions: 24,
+    lineStatsComplete: true,
+    fileCount: 3,
+  },
 };
 
 const dirtyContextBannerSection =
   selectWorkspaceChangedFilesSection(dirtyWorkspaceStatus);
 
 const contextBannerElement: ReactNode = dirtyContextBannerSection ? (
-  <ThreadPromptContextBanner
-    archivedSection={null}
-    environmentGoneSection={null}
-    gitSection={{
-      changedFiles: dirtyContextBannerSection,
-      mergeBase: {
-        branch: "main",
-        options: ["main", "develop", "release/2026-05"],
-        onChange: noop,
-      },
-      onPromptBannerFileClick: noop,
+  <GitSegmentFixtureProvider
+    value={{
+      section: dirtyContextBannerSection,
+      mergeBase: gitSegmentFixtureMergeBase(),
     }}
-    gitSectionPending={false}
-    parentThreadSection={null}
-    childThreadsSection={null}
-    pullRequestSection={null}
-    expandedSection={null}
-    onToggleSection={noop}
-  />
+  >
+    <ThreadPromptContextBanner
+      input={{
+        threadId: "thr_story",
+        projectId: "proj_story",
+        environment: null,
+      }}
+      core={{
+        parentThread: null,
+      }}
+      archivedSection={null}
+      environmentGoneSection={null}
+      expandedSegment={null}
+      onToggleSegment={noop}
+    />
+  </GitSegmentFixtureProvider>
 ) : null;
 
 const archivedContextBannerElement: ReactNode = (
   <ThreadPromptContextBanner
+    input={{
+      threadId: "thr_story",
+      projectId: "proj_story",
+      environment: null,
+    }}
+    core={{
+      parentThread: null,
+    }}
     archivedSection={{ archivedAt: 1_731_456_000_000 }}
     environmentGoneSection={null}
-    gitSection={null}
-    gitSectionPending={false}
-    parentThreadSection={null}
-    childThreadsSection={null}
-    pullRequestSection={null}
-    expandedSection={null}
-    onToggleSection={noop}
+    expandedSegment={null}
+    onToggleSegment={noop}
   />
 );
 
 const environmentGoneContextBannerElement: ReactNode = (
   <ThreadPromptContextBanner
+    input={{
+      threadId: "thr_story",
+      projectId: "proj_story",
+      environment: null,
+    }}
+    core={{
+      parentThread: null,
+    }}
     archivedSection={null}
     environmentGoneSection={{ status: "destroyed" }}
-    gitSection={null}
-    gitSectionPending={false}
-    parentThreadSection={null}
-    childThreadsSection={null}
-    pullRequestSection={null}
-    expandedSection={null}
-    onToggleSection={noop}
+    expandedSegment={null}
+    onToggleSegment={noop}
   />
 );
 
@@ -539,6 +553,7 @@ interface RowConfig {
   promptPlaceholder?: string;
   environmentSummary?: ReactNode | null;
   contextWindowUsage?: ThreadContextWindowUsage | null;
+  compactBeforeSend?: CompactBeforeSendOffer | null;
   stack?: ReactNode | null;
   queuedMessages?: readonly ThreadQueuedMessage[];
   collapseResetKey?: string;
@@ -549,6 +564,9 @@ interface RowConfig {
     typeof FollowUpPromptBox
   >[0]["activePromptMode"];
   readOnly?: boolean;
+  steerActiveThreadOnEnter?: boolean;
+  pendingInteraction?: ReactNode;
+  queueOnSubmit?: boolean;
 }
 
 type FollowUpComposerRuntimeStatus = NonNullable<
@@ -579,6 +597,7 @@ function Row({
   promptPlaceholder,
   environmentSummary = localEnvironmentSummary,
   contextWindowUsage = null,
+  compactBeforeSend = null,
   stack = null,
   queuedMessages: initialQueuedMessages,
   collapseResetKey = "thr_demo",
@@ -587,6 +606,9 @@ function Row({
   permission = basePermission,
   activePromptMode = null,
   readOnly = false,
+  steerActiveThreadOnEnter = false,
+  pendingInteraction = null,
+  queueOnSubmit = false,
 }: RowConfig) {
   const [message, setMessage] = useState(initialMessage);
   const [queueExpanded, setQueueExpanded] = useState(true);
@@ -725,6 +747,7 @@ function Row({
         queuedMessages={storyQueuedMessages}
         inlineEditor={inlineEditor}
         sendAction="send-now"
+        threadStatus="active"
         sendDisabled={false}
         actionDisabled={false}
         processingMessageId={null}
@@ -737,6 +760,7 @@ function Row({
         onReorder={noop}
         onSetGroupBoundary={noop}
         onEdit={handleEditQueuedMessage}
+        onChangeSendTime={noopAsync}
         expanded={queueExpanded}
         onExpandedChange={setQueueExpanded}
         onDelete={(id) =>
@@ -746,6 +770,17 @@ function Row({
         }
       />
     );
+  const queueStoryDraft = useCallback(() => {
+    const text = message.trim();
+    if (text.length === 0) return;
+    setStoryQueuedMessages((current) => [
+      ...current,
+      makeStoryQueuedMessage(`q_story_${current.length + 1}`, text),
+    ]);
+    setMessage("");
+    setMentionRanges([]);
+  }, [message]);
+  const submitStoryDraft = queueOnSubmit ? queueStoryDraft : noop;
   const resolvedStack = queueElement ? (
     <>
       {stack}
@@ -777,17 +812,20 @@ function Row({
                 mentionRanges,
                 onChangeMessage: handleChangeMessage,
                 onModifierSubmit: noop,
-                onSubmit: noop,
+                onSubmit: submitStoryDraft,
                 compactPromptPlaceholder: resolvedCompactPlaceholder,
                 promptPlaceholder: resolvedPlaceholder,
-                canModifierSubmit: submitMode.kind === "queue",
-                steerActiveThreadOnEnter: false,
+                canModifierSubmit:
+                  submitMode.kind === "queue" && message.trim().length > 0,
+                steerActiveThreadOnEnter,
                 submitMode,
                 threadRuntimeDisplayStatus,
               }
         }
+        pendingInteraction={pendingInteraction}
         environmentSummary={environmentSummary}
         contextWindowUsage={contextWindowUsage}
+        compactBeforeSend={compactBeforeSend}
         execution={execution}
         permission={permission}
         activePromptMode={activePromptMode}
@@ -812,6 +850,27 @@ function StackedCardsWithPillsRow() {
       queuedMessages={queuedMessages}
       contextWindowUsage={usage}
       environmentSummary={multiMachineEnvironmentSummary}
+    />
+  );
+}
+
+const expiredCacheUsage: ThreadContextWindowUsage = {
+  usedTokens: 331_000,
+  modelContextWindow: 1_000_000,
+  estimated: false,
+};
+
+function CompactBeforeSendRow() {
+  const [compactFirst, setCompactFirst] = useState(true);
+  return (
+    <Row
+      submitMode={{ kind: "ready" }}
+      contextWindowUsage={expiredCacheUsage}
+      compactBeforeSend={{
+        compactFirst,
+        tokens: expiredCacheUsage.usedTokens,
+        onCompactFirstChange: setCompactFirst,
+      }}
     />
   );
 }
@@ -893,6 +952,12 @@ export function Overview() {
           environmentSummary={detachedWorktreeEnvironmentSummary}
         />
       </StoryRow>
+      <StoryRow
+        label="prompt cache expired"
+        hint="click the chip to switch between compacting first and keeping the full history"
+      >
+        <CompactBeforeSendRow />
+      </StoryRow>
       <StoryRow label="with promptbox context banner">
         <Row
           submitMode={{ kind: "ready" }}
@@ -954,6 +1019,99 @@ export function Overview() {
           submitMode={{ kind: "queue", onStop: noop }}
           threadRuntimeDisplayStatus="starting"
           environmentSummary={provisioningEnvironmentSummary}
+        />
+      </StoryRow>
+    </StoryCard>
+  );
+}
+
+const busyThreadQueuedMessages: readonly ThreadQueuedMessage[] = [
+  makeStoryQueuedMessage(
+    "q_busy_1",
+    "Then update the changelog for this release.",
+  ),
+];
+
+function busySubmitMode(hasPendingInteraction: boolean): FollowUpSubmitMode {
+  return buildFollowUpSubmitMode({
+    hasPendingInteraction,
+    isDefaultExecutionOptionsLoading: false,
+    isStopRequested: false,
+    onStop: noop,
+    runtimeDisplayStatus: "active",
+  });
+}
+
+const syntheticApprovalCard = (
+  <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground">
+    Synthetic approval: allow Bash to run <code>pnpm test</code>?
+  </div>
+);
+
+export function BusyThreadQueue() {
+  return (
+    <StoryCard>
+      <StoryRow
+        label="busy · empty draft"
+        hint="synthetic fixture: the thread is running a command and Enter steers (the default preference)"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-steers-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · draft typed · Enter steers"
+        hint="synthetic fixture: Queue in the send menu (or the modifier shortcut) adds the draft to the queue above; steering is not simulated"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-steers-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          initialMessage="Also check the mobile layout once this finishes."
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · draft typed · Enter queues"
+        hint="synthetic fixture: the preference set to queue on Enter"
+      >
+        <Row
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-queues-on-enter",
+          )}
+          submitMode={busySubmitMode(false)}
+          threadRuntimeDisplayStatus="active"
+          queueOnSubmit
+          initialMessage="Also check the mobile layout once this finishes."
+          queuedMessages={busyThreadQueuedMessages}
+        />
+      </StoryRow>
+      <StoryRow
+        label="busy · awaiting approval"
+        hint="synthetic fixture: the run waits on an approval; a follow-up can still be queued for later"
+      >
+        <Row
+          submitMode={busySubmitMode(true)}
+          threadRuntimeDisplayStatus="active"
+          steerActiveThreadOnEnter
+          queueOnSubmit
+          initialMessage="After this, open a PR."
+          promptPlaceholder={getFollowUpPromptPlaceholder(
+            "active-queues-on-enter",
+          )}
+          queuedMessages={busyThreadQueuedMessages}
+          pendingInteraction={syntheticApprovalCard}
         />
       </StoryRow>
     </StoryCard>

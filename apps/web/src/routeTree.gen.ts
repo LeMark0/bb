@@ -27,6 +27,7 @@ import { Route as OauthRevokeRouteImport } from "./routes/oauth.revoke";
 import { Route as OauthAuthorizeRouteImport } from "./routes/oauth.authorize";
 import { Route as MarketplacePluginIdRouteImport } from "./routes/marketplace_.$pluginId";
 import { Route as GuidesSlugRouteImport } from "./routes/guides.$slug";
+import { Route as DownloadIndexRouteImport } from "./routes/download.index";
 import { Route as DownloadWindowsRouteImport } from "./routes/download.windows";
 import { Route as DownloadMacosRouteImport } from "./routes/download.macos";
 import { Route as DownloadLinuxRouteImport } from "./routes/download.linux";
@@ -34,6 +35,7 @@ import { Route as CompareSlugRouteImport } from "./routes/compare.$slug";
 import { Route as BlogSlugRouteImport } from "./routes/blog_.$slug";
 import { Route as ApiSubscribeRouteImport } from "./routes/api.subscribe";
 import { Route as DotwellKnownOauthAuthorizationServerRouteImport } from "./routes/[.]well-known.oauth-authorization-server";
+import { Route as DotwellKnownBbConnectGateKeysDotjsonRouteImport } from "./routes/[.]well-known.bb-connect-gate-keys[.]json";
 import { Route as DotwellKnownAssetlinksDotjsonRouteImport } from "./routes/[.]well-known.assetlinks[.]json";
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from "./routes/[.]well-known.apple-app-site-association";
 import { Route as MarketplaceAuthorGithubRouteImport } from "./routes/marketplace_.author.$github";
@@ -143,6 +145,11 @@ const GuidesSlugRoute = GuidesSlugRouteImport.update({
   path: "/guides/$slug",
   getParentRoute: () => rootRouteImport,
 } as any);
+const DownloadIndexRoute = DownloadIndexRouteImport.update({
+  id: "/download/",
+  path: "/download/",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DownloadWindowsRoute = DownloadWindowsRouteImport.update({
   id: "/download/windows",
   path: "/download/windows",
@@ -177,6 +184,12 @@ const DotwellKnownOauthAuthorizationServerRoute =
   DotwellKnownOauthAuthorizationServerRouteImport.update({
     id: "/.well-known/oauth-authorization-server",
     path: "/.well-known/oauth-authorization-server",
+    getParentRoute: () => rootRouteImport,
+  } as any);
+const DotwellKnownBbConnectGateKeysDotjsonRoute =
+  DotwellKnownBbConnectGateKeysDotjsonRouteImport.update({
+    id: "/.well-known/bb-connect-gate-keys.json",
+    path: "/.well-known/bb-connect-gate-keys.json",
     getParentRoute: () => rootRouteImport,
   } as any);
 const DotwellKnownAssetlinksDotjsonRoute =
@@ -290,12 +303,14 @@ export interface FileRoutesByFullPath {
   "/uninstall": typeof UninstallRoute;
   "/.well-known/apple-app-site-association": typeof DotwellKnownAppleAppSiteAssociationRoute;
   "/.well-known/assetlinks.json": typeof DotwellKnownAssetlinksDotjsonRoute;
+  "/.well-known/bb-connect-gate-keys.json": typeof DotwellKnownBbConnectGateKeysDotjsonRoute;
   "/.well-known/oauth-authorization-server": typeof DotwellKnownOauthAuthorizationServerRoute;
   "/api/subscribe": typeof ApiSubscribeRoute;
   "/blog/$slug": typeof BlogSlugRoute;
   "/compare/$slug": typeof CompareSlugRoute;
   "/download/linux": typeof DownloadLinuxRoute;
   "/download/macos": typeof DownloadMacosRoute;
+  "/download/": typeof DownloadIndexRoute;
   "/download/windows": typeof DownloadWindowsRoute;
   "/guides/$slug": typeof GuidesSlugRoute;
   "/marketplace/$pluginId": typeof MarketplacePluginIdRoute;
@@ -335,12 +350,14 @@ export interface FileRoutesByTo {
   "/uninstall": typeof UninstallRoute;
   "/.well-known/apple-app-site-association": typeof DotwellKnownAppleAppSiteAssociationRoute;
   "/.well-known/assetlinks.json": typeof DotwellKnownAssetlinksDotjsonRoute;
+  "/.well-known/bb-connect-gate-keys.json": typeof DotwellKnownBbConnectGateKeysDotjsonRoute;
   "/.well-known/oauth-authorization-server": typeof DotwellKnownOauthAuthorizationServerRoute;
   "/api/subscribe": typeof ApiSubscribeRoute;
   "/blog/$slug": typeof BlogSlugRoute;
   "/compare/$slug": typeof CompareSlugRoute;
   "/download/linux": typeof DownloadLinuxRoute;
   "/download/macos": typeof DownloadMacosRoute;
+  "/download": typeof DownloadIndexRoute;
   "/download/windows": typeof DownloadWindowsRoute;
   "/guides/$slug": typeof GuidesSlugRoute;
   "/marketplace/$pluginId": typeof MarketplacePluginIdRoute;
@@ -381,12 +398,14 @@ export interface FileRoutesById {
   "/uninstall": typeof UninstallRoute;
   "/.well-known/apple-app-site-association": typeof DotwellKnownAppleAppSiteAssociationRoute;
   "/.well-known/assetlinks.json": typeof DotwellKnownAssetlinksDotjsonRoute;
+  "/.well-known/bb-connect-gate-keys.json": typeof DotwellKnownBbConnectGateKeysDotjsonRoute;
   "/.well-known/oauth-authorization-server": typeof DotwellKnownOauthAuthorizationServerRoute;
   "/api/subscribe": typeof ApiSubscribeRoute;
   "/blog_/$slug": typeof BlogSlugRoute;
   "/compare/$slug": typeof CompareSlugRoute;
   "/download/linux": typeof DownloadLinuxRoute;
   "/download/macos": typeof DownloadMacosRoute;
+  "/download/": typeof DownloadIndexRoute;
   "/download/windows": typeof DownloadWindowsRoute;
   "/guides/$slug": typeof GuidesSlugRoute;
   "/marketplace_/$pluginId": typeof MarketplacePluginIdRoute;
@@ -428,12 +447,14 @@ export interface FileRouteTypes {
     | "/uninstall"
     | "/.well-known/apple-app-site-association"
     | "/.well-known/assetlinks.json"
+    | "/.well-known/bb-connect-gate-keys.json"
     | "/.well-known/oauth-authorization-server"
     | "/api/subscribe"
     | "/blog/$slug"
     | "/compare/$slug"
     | "/download/linux"
     | "/download/macos"
+    | "/download/"
     | "/download/windows"
     | "/guides/$slug"
     | "/marketplace/$pluginId"
@@ -473,12 +494,14 @@ export interface FileRouteTypes {
     | "/uninstall"
     | "/.well-known/apple-app-site-association"
     | "/.well-known/assetlinks.json"
+    | "/.well-known/bb-connect-gate-keys.json"
     | "/.well-known/oauth-authorization-server"
     | "/api/subscribe"
     | "/blog/$slug"
     | "/compare/$slug"
     | "/download/linux"
     | "/download/macos"
+    | "/download"
     | "/download/windows"
     | "/guides/$slug"
     | "/marketplace/$pluginId"
@@ -518,12 +541,14 @@ export interface FileRouteTypes {
     | "/uninstall"
     | "/.well-known/apple-app-site-association"
     | "/.well-known/assetlinks.json"
+    | "/.well-known/bb-connect-gate-keys.json"
     | "/.well-known/oauth-authorization-server"
     | "/api/subscribe"
     | "/blog_/$slug"
     | "/compare/$slug"
     | "/download/linux"
     | "/download/macos"
+    | "/download/"
     | "/download/windows"
     | "/guides/$slug"
     | "/marketplace_/$pluginId"
@@ -564,12 +589,14 @@ export interface RootRouteChildren {
   UninstallRoute: typeof UninstallRoute;
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute;
   DotwellKnownAssetlinksDotjsonRoute: typeof DotwellKnownAssetlinksDotjsonRoute;
+  DotwellKnownBbConnectGateKeysDotjsonRoute: typeof DotwellKnownBbConnectGateKeysDotjsonRoute;
   DotwellKnownOauthAuthorizationServerRoute: typeof DotwellKnownOauthAuthorizationServerRoute;
   ApiSubscribeRoute: typeof ApiSubscribeRoute;
   BlogSlugRoute: typeof BlogSlugRoute;
   CompareSlugRoute: typeof CompareSlugRoute;
   DownloadLinuxRoute: typeof DownloadLinuxRoute;
   DownloadMacosRoute: typeof DownloadMacosRoute;
+  DownloadIndexRoute: typeof DownloadIndexRoute;
   DownloadWindowsRoute: typeof DownloadWindowsRoute;
   GuidesSlugRoute: typeof GuidesSlugRoute;
   OauthAuthorizeRoute: typeof OauthAuthorizeRoute;
@@ -720,6 +747,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof GuidesSlugRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/download/": {
+      id: "/download/";
+      path: "/download";
+      fullPath: "/download/";
+      preLoaderRoute: typeof DownloadIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/download/windows": {
       id: "/download/windows";
       path: "/download/windows";
@@ -767,6 +801,13 @@ declare module "@tanstack/react-router" {
       path: "/.well-known/oauth-authorization-server";
       fullPath: "/.well-known/oauth-authorization-server";
       preLoaderRoute: typeof DotwellKnownOauthAuthorizationServerRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/.well-known/bb-connect-gate-keys.json": {
+      id: "/.well-known/bb-connect-gate-keys.json";
+      path: "/.well-known/bb-connect-gate-keys.json";
+      fullPath: "/.well-known/bb-connect-gate-keys.json";
+      preLoaderRoute: typeof DotwellKnownBbConnectGateKeysDotjsonRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/.well-known/assetlinks.json": {
@@ -929,6 +970,8 @@ const rootRouteChildren: RootRouteChildren = {
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
   DotwellKnownAssetlinksDotjsonRoute: DotwellKnownAssetlinksDotjsonRoute,
+  DotwellKnownBbConnectGateKeysDotjsonRoute:
+    DotwellKnownBbConnectGateKeysDotjsonRoute,
   DotwellKnownOauthAuthorizationServerRoute:
     DotwellKnownOauthAuthorizationServerRoute,
   ApiSubscribeRoute: ApiSubscribeRoute,
@@ -936,6 +979,7 @@ const rootRouteChildren: RootRouteChildren = {
   CompareSlugRoute: CompareSlugRoute,
   DownloadLinuxRoute: DownloadLinuxRoute,
   DownloadMacosRoute: DownloadMacosRoute,
+  DownloadIndexRoute: DownloadIndexRoute,
   DownloadWindowsRoute: DownloadWindowsRoute,
   GuidesSlugRoute: GuidesSlugRoute,
   OauthAuthorizeRoute: OauthAuthorizeRoute,
