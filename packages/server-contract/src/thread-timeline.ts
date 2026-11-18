@@ -120,6 +120,14 @@ const timelineConversationRowBaseSchema = timelineRowBaseSchema.extend({
   attachments: timelineConversationAttachmentsSchema.nullable(),
 });
 
+export const timelineRequestPlanSchema = z.object({
+  revisionSeq: z.number().int(),
+  steps: z.array(threadEventPlanStepSchema),
+  explanation: z.string().nullable(),
+  turnStatus: timelineRowStatusSchema,
+});
+export type TimelineRequestPlan = z.infer<typeof timelineRequestPlanSchema>;
+
 export const timelineUserConversationRowSchema =
   timelineConversationRowBaseSchema.extend({
     role: z.literal("user"),
@@ -129,6 +137,7 @@ export const timelineUserConversationRowSchema =
     systemMessageSubject: systemMessageSubjectSchema.nullable(),
     turnRequest: timelineConversationTurnRequestSchema,
     mentions: z.array(promptTextMentionSchema),
+    requestPlan: timelineRequestPlanSchema.optional(),
   });
 export type TimelineUserConversationRow = z.infer<
   typeof timelineUserConversationRowSchema

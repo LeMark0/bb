@@ -101,6 +101,14 @@ function buildTimelineLogicalSegments(
   return populated;
 }
 
+function timelineRowChangeSequence(row: TimelineRow): number {
+  return row.kind === "conversation" &&
+    row.role === "user" &&
+    row.requestPlan !== undefined
+    ? Math.max(row.sourceSeqEnd, row.requestPlan.revisionSeq)
+    : row.sourceSeqEnd;
+}
+
 function timelineRowChangesFrom(
   row: TimelineRow,
   sequence: number,
@@ -155,7 +163,7 @@ export function paginateTimelineRows(
     );
     const changed =
       page.kind === "latest"
-        ? omitted.filter((row) => row.sourceSeqEnd >= windowStart)
+        ? omitted.filter((row) => timelineRowChangeSequence(row) >= windowStart)
         : [];
     const updates = changed.map((row) =>
       timelineRowChangesFrom(row, windowStart),
@@ -167,9 +175,11 @@ export function paginateTimelineRows(
     return {
       olderRowsSourceSeqEnd: omitted
         .filter((row) => !reported.includes(row))
-        .reduce<
-          number | null
-        >((sourceSeqEnd, row) => Math.max(sourceSeqEnd ?? 0, row.sourceSeqEnd), omittedContentSourceSeqEnd),
+        .reduce<number | null>(
+          (sourceSeqEnd, row) =>
+            Math.max(sourceSeqEnd ?? 0, timelineRowChangeSequence(row)),
+          omittedContentSourceSeqEnd,
+        ),
       ...(reported.length > 0 ? { olderRowUpdates: updates } : {}),
     };
   };

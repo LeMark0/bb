@@ -79,7 +79,11 @@ window changes and that a full walk shows every row once, in order.
 
 A latest page sends omitted rows whose `sourceSeqEnd` reaches its window start
 in `timelinePage.olderRowUpdates` instead of in `olderRowsSourceSeqEnd`, such as
-a running background delegation that started on an older page. Each update
+a running background delegation that started on an older page. A user request
+row with a `requestPlan` counts from the later of its `sourceSeqEnd` and the
+plan's `revisionSeq`, which follows the turn's latest plan update and, once the
+turn ends, its end. A request that a steer pushed onto an older page therefore
+still receives its plan changes; `olderRowsSourceSeqEnd` uses the same value. Each update
 keeps only the nested children that reach the window start.
 `mergeLoadedTimelineWithLatest` joins each update into the loaded row with the
 same id and ignores rows it has not loaded, including on repeat refreshes of

@@ -350,6 +350,13 @@ function buildClientUserMessage({
         ? null
         : (decoded.systemMessageSubject ?? null),
     turnRequest,
+    ...(progressSenderThreadId === undefined
+      ? {}
+      : { progressNote: true as const }),
+    ...(decoded.target.kind === "thread-start" &&
+    acceptedClientRequest !== undefined
+      ? { acceptedTurnId: acceptedClientRequest.turnId }
+      : {}),
     text: parsedInput.text,
     mentions: parsedInput.mentions,
     attachments: buildAttachments(parsedInput),

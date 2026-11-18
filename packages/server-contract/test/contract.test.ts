@@ -274,7 +274,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "A plan step carries a status only once the provider reports progress on it; absence means the step is listed but not yet started, which is not the same as pending. It carries an id and prerequisites only when the provider reports them: absent prerequisites mean the provider sent no dependency data, which is not the same as an empty list of prerequisites.",
+      "A plan step carries a status only once the provider reports progress on it; absence means the step is listed but not yet started, which is not the same as pending. It carries an id and prerequisites only when the provider reports them: absent prerequisites mean the provider sent no dependency data, which is not the same as an empty list of prerequisites. A user request row carries a plan only when its turn published a root plan; absence means the turn published none, while an empty step list means the provider cleared it.",
     fields: [
       "threadTimelineResponseSchema.rows.steps.id",
       "threadTimelineResponseSchema.rows.steps.needs",
@@ -282,6 +282,14 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.id",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.needs",
       "threadTimelineResponseSchema.timelinePage.olderRowUpdates.steps.status",
+      "threadTimelineResponseSchema.rows.requestPlan.steps.id",
+      "threadTimelineResponseSchema.rows.requestPlan.steps.needs",
+      "threadTimelineResponseSchema.rows.requestPlan.steps.status",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.requestPlan.steps.id",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.requestPlan.steps.needs",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.requestPlan.steps.status",
+      "threadTimelineResponseSchema.rows.requestPlan",
+      "threadTimelineResponseSchema.timelinePage.olderRowUpdates.requestPlan",
     ],
   },
   {
