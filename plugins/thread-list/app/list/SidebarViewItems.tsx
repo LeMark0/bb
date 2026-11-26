@@ -16,6 +16,7 @@ import type { HeaderCreationActions } from "./SidebarHeaderControls.js";
 import { ThreadListVisibilityMenuItems } from "./ThreadListVisibility.js";
 import {
   sidebarThreadLifecyclesAtom,
+  sidebarShowHiddenChildrenAtom,
   sidebarOrganizationModeAtom,
   sidebarChronologicalSortAtom,
   sidebarSortDirectionAtom,
@@ -135,6 +136,9 @@ export function SidebarHeaderMenuContents({
 
 function SidebarViewItems({ page }: { page: SidebarViewPage }) {
   const [lifecycles, setLifecycles] = useAtom(sidebarThreadLifecyclesAtom);
+  const [showHiddenChildren, setShowHiddenChildren] = useAtom(
+    sidebarShowHiddenChildrenAtom,
+  );
   const [organization, setOrganization] = useAtom(sidebarOrganizationModeAtom);
   const [sort, setSort] = useAtom(sidebarChronologicalSortAtom);
   const [savedDirection, setDirection] = useAtom(sidebarSortDirectionAtom);
@@ -176,6 +180,20 @@ function SidebarViewItems({ page }: { page: SidebarViewPage }) {
             </DropdownMenuItem>
           );
         })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          role="menuitemcheckbox"
+          aria-checked={showHiddenChildren}
+          onSelect={(event) => {
+            event.preventDefault();
+            setShowHiddenChildren(!showHiddenChildren);
+          }}
+        >
+          Hidden children
+          <span className="ml-auto inline-flex size-4 items-center justify-center">
+            {showHiddenChildren && <Icon name="Check" className="size-4" />}
+          </span>
+        </DropdownMenuItem>
       </DropdownMenuGroup>
     );
   }

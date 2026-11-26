@@ -263,6 +263,49 @@ describe("thread-list plugin", () => {
     ).not.toBeNull();
   });
 
+  it("keeps a hidden child from another machine under its parent in machine mode", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    renderList(
+      { organizationMode: "machine", showHiddenChildren: true },
+      {
+        sidebarThreads: {
+          projects: PROJECTS,
+          sections: SECTIONS,
+          threads: [
+            ...THREADS,
+            makeSidebarThread({
+              id: "thr_hidden_on_laptop",
+              projectId: "proj_web",
+              title: "Hidden child on laptop",
+              parentThreadId: "thr_parent",
+              isHidden: true,
+              host: { id: "host_laptop", name: "Laptop" },
+              createdAt: 9,
+              updatedAt: 9,
+              latestAttentionAt: 9,
+            }),
+          ],
+          experimental_hiddenChildren: {
+            status: "ready",
+            retry: vi.fn(async () => undefined),
+          },
+        },
+      },
+    );
+
+    const child = await screen.findByText("Hidden child on laptop");
+    const noMachine = screen
+      .getByTitle("No machine")
+      .closest("[data-sidebar-sticky-group]") as HTMLElement;
+    expect(noMachine.contains(child)).toBe(true);
+    expect(
+      threadIds().filter((id) => id === "thr_hidden_on_laptop"),
+    ).toHaveLength(1);
+    expect(threadIds().indexOf("thr_hidden_on_laptop")).toBe(
+      threadIds().indexOf("thr_parent") + 1,
+    );
+  });
+
   it("opens the composer on the machine named by its section", async () => {
     setPreferencesMirrorStorageForTest(null);
     const { inspection } = renderList({ organizationMode: "machine" });
@@ -328,6 +371,107 @@ describe("thread-list plugin", () => {
       .closest("[data-sidebar-sticky-group]") as HTMLElement;
     expect(within(threadsGroup).getByText("Personal thread")).not.toBeNull();
   });
+
+  it("nests a hidden child from another project under its parent once and reveals it when opened", async () => {
+    setPreferencesMirrorStorageForTest(null);
+    const hiddenChild = makeSidebarThread({
+      id: "thr_hidden_child",
+      projectId: "proj_web",
+      title: "Hidden child thread",
+      parentThreadId: "thr_parent",
+      isHidden: true,
+      createdAt: 9,
+      updatedAt: 9,
+      latestAttentionAt: 9,
+    });
+    renderSlot(
+      registration,
+      {
+        ...props(),
+        activeThreadId: hiddenChild.id,
+        activeProjectId: "proj_web",
+      },
+      {
+        context: { projectId: "proj_web", threadId: hiddenChild.id },
+        sidebarThreads: {
+          projects: PROJECTS,
+          sections: SECTIONS,
+          threads: [
+            ...THREADS,
+            hiddenChild,
+            makeSidebarThread({
+              id: "thr_hidden_root",
+              projectId: "proj_web",
+              title: "Hidden root thread",
+              isHidden: true,
+            }),
+          ],
+          experimental_hiddenChildren: {
+            status: "ready",
+            retry: vi.fn(async () => undefined),
+          },
+        },
+        rpc: {
+          listPreferences: () => ({
+            preferences: {
+              ...defaultPreferences(),
+              organizationMode: "project",
+              showHiddenChildren: true,
+              collapsedThreads: ["thr_parent"],
+            },
+          }),
+          setPreference: (input: unknown) => input,
+        },
+      },
+    );
+
+    const child = await screen.findByText("Hidden child thread");
+    const appGroup = screen
+      .getByTitle("App")
+      .closest("[data-sidebar-sticky-group]") as HTMLElement;
+    expect(appGroup.contains(child)).toBe(true);
+    expect(threadIds().filter((id) => id === "thr_hidden_child")).toHaveLength(
+      1,
+    );
+    expect(screen.queryByText("Hidden root thread")).toBeNull();
+    expect(threadIds().indexOf("thr_hidden_child")).toBe(
+      threadIds().indexOf("thr_parent") + 1,
+    );
+  });
+
+  it.each([
+    ["loading", "Loading hidden children…"],
+    ["error", "Hidden children unavailable"],
+  ] as const)(
+    "keeps listed rows while hidden children are %s",
+    async (status, message) => {
+      setPreferencesMirrorStorageForTest(null);
+      const retry = vi.fn(async () => undefined);
+      renderList(
+        { showHiddenChildren: true },
+        {
+          sidebarThreads: {
+            projects: PROJECTS,
+            sections: SECTIONS,
+            threads: THREADS,
+            experimental_hiddenChildren: { status, retry },
+          },
+        },
+      );
+
+      await screen.findByText("Parent thread");
+      expect(screen.getByText(message).getAttribute("role")).toBe("status");
+      const retryButton = screen.queryByRole("button", {
+        name: "Retry loading hidden children",
+      });
+      if (status === "error") {
+        fireEvent.click(retryButton as HTMLElement);
+        expect(retry).toHaveBeenCalledOnce();
+      } else {
+        expect(retryButton).toBeNull();
+      }
+    },
+  );
 
   it("keys its slot and preferences mirror by its own plugin id", async () => {
     window.localStorage.clear();

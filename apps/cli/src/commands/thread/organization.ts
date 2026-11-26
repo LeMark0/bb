@@ -37,6 +37,7 @@ interface SectionDeleteOptions extends JsonOptions {
 }
 
 interface SearchOptions extends JsonOptions {
+  includeHidden?: boolean;
   limit?: string;
 }
 
@@ -243,6 +244,7 @@ export function registerOrganizationCommands(
       "--limit <count>",
       `Maximum results per group (1-${THREAD_SEARCH_LIMIT_PER_GROUP_MAX})`,
     )
+    .option("--include-hidden", "Also search hidden threads")
     .option("--json", "Print machine-readable JSON output")
     .action(
       action(async (query: string, opts: SearchOptions) => {
@@ -253,6 +255,7 @@ export function registerOrganizationCommands(
             "--limit",
             THREAD_SEARCH_LIMIT_PER_GROUP_MAX,
           ),
+          ...(opts.includeHidden ? { includeHidden: true } : {}),
         });
         if (outputJson(opts, result)) return;
         printHumanJson(result);

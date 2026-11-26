@@ -31,6 +31,7 @@ import {
 import { usePluginThreadRowStatus } from "@/lib/plugin-thread-row-status";
 import { THREAD_LIFECYCLE_OPTIONS } from "@/components/thread/ThreadLifecycleFilter";
 import {
+  paletteThreadIncludeHiddenAtom,
   paletteThreadLifecyclesAtom,
   paletteThreadSortAtom,
   paletteThreadSortDirectionAtom,
@@ -111,6 +112,9 @@ export function ThreadSearchPaletteMode({
     () => normalizeThreadLifecycleFilter(selectedLifecycles),
     [selectedLifecycles],
   );
+  const [includeHidden, setIncludeHidden] = useAtom(
+    paletteThreadIncludeHiddenAtom,
+  );
   const [sort, setSort] = useAtom(paletteThreadSortAtom);
   const [sortDirection, setSortDirection] = useAtom(
     paletteThreadSortDirectionAtom,
@@ -123,7 +127,7 @@ export function ThreadSearchPaletteMode({
   const [shownCounts, setShownCounts] = useState<
     Partial<Record<ThreadArchiveFilter, number>>
   >({});
-  const filterKey = `${lifecycles.join(",")}:${sort}:${sortDirection}`;
+  const filterKey = `${lifecycles.join(",")}:${includeHidden}:${sort}:${sortDirection}`;
   const [previousFilterKey, setPreviousFilterKey] = useState(filterKey);
   if (previousFilterKey !== filterKey) {
     setPreviousFilterKey(filterKey);
@@ -133,7 +137,11 @@ export function ThreadSearchPaletteMode({
   }
   const [now] = useState(() => Date.now());
   const navigation = useSidebarNavigation();
-  const threadSearch = useThreadSearch({ active: true, query });
+  const threadSearch = useThreadSearch({
+    active: true,
+    includeHidden,
+    query,
+  });
   const trimmedQuery = query.trim();
   const archived = usePaletteRecentArchivedThreads({
     enabled: trimmedQuery.length === 0 && lifecycles.includes("archived"),
@@ -414,6 +422,8 @@ export function ThreadSearchPaletteMode({
           <PaletteThreadViewMenu
             lifecycles={lifecycles}
             onLifecyclesChange={setLifecycles}
+            includeHidden={includeHidden}
+            onIncludeHiddenChange={setIncludeHidden}
             sort={sort}
             sortDirection={sortDirection}
             onSortChange={(nextSort, nextDirection) => {
@@ -589,6 +599,9 @@ function ThreadSearchPaletteRow({ row }: { row: PaletteThreadSearchRow }) {
           </span>
         )}
         <ThreadSearchPaletteStatus row={row} />
+        {row.thread.visibility === "hidden" ? (
+          <ThreadSearchPaletteHiddenMarker />
+        ) : null}
       </span>
     </span>
   );
@@ -638,6 +651,32 @@ function PaletteMatchText({
       highlightRanges={shown.highlightRanges}
       className={cn("[&_span]:whitespace-nowrap", className)}
     />
+  );
+}
+
+function ThreadSearchPaletteHiddenMarker() {
+  return (
+    <>
+      <span
+        aria-hidden="true"
+        className="shrink-0 text-xs leading-4 text-subtle-foreground"
+      >
+        ·
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            role="img"
+            aria-label="Hidden thread"
+            className="inline-flex size-3.5 shrink-0 cursor-default items-center justify-center text-subtle-foreground"
+            data-palette-thread-hidden
+          >
+            <Icon name="EyeOff" className="size-3.5" aria-hidden />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left">Hidden thread</TooltipContent>
+      </Tooltip>
+    </>
   );
 }
 

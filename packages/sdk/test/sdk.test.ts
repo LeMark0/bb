@@ -1346,6 +1346,35 @@ describe("@bb/sdk", () => {
     });
   });
 
+  it("sends search includeHidden as a query string only when it is defined", async () => {
+    const emptySearch = {
+      active: { total: 0, results: [] },
+      archived: { total: 0, results: [] },
+    };
+    const queue = createFetchQueue([
+      { body: emptySearch },
+      { body: emptySearch },
+      { body: emptySearch },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await sdk.threads.search({ query: "needle", includeHidden: true });
+    await sdk.threads.search({ query: "needle", includeHidden: false });
+    await sdk.threads.search({ query: "needle", limitPerGroup: "5" });
+
+    expect(queue.requests.map((request) => request.url)).toEqual([
+      "http://bb.test/api/v1/threads/search?query=needle&includeHidden=true",
+      "http://bb.test/api/v1/threads/search?query=needle&includeHidden=false",
+      "http://bb.test/api/v1/threads/search?limitPerGroup=5&query=needle",
+    ]);
+  });
+
   it("forwards every public permission mode through thread surfaces", async () => {
     const queue = createFetchQueue([
       { body: { id: "thr_auto" }, status: 201 },

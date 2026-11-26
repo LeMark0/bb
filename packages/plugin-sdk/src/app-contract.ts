@@ -1145,6 +1145,15 @@ export interface PluginSidebarThreadsState {
     isFetchNextPageError: boolean;
     fetchNextPage(): Promise<void>;
   } | null;
+  /**
+   * Loading state of the hidden child threads requested with
+   * `experimental_includeHiddenChildren`; null when they were not requested.
+   * Older hosts omit it.
+   */
+  experimental_hiddenChildren?: {
+    status: "loading" | "ready" | "error";
+    retry(): Promise<void>;
+  } | null;
   status: "loading" | "ready" | "error";
   threads: readonly PluginSidebarThread[];
   experimental_hosts?: readonly { id: string; name: string }[];
@@ -1467,6 +1476,13 @@ export interface PluginThreadActionTarget {
   pinnedAt: number | null;
   sectionId: string | null;
   isUnread: boolean;
+  /**
+   * True for a thread with `visibility: "hidden"`; omitted means visible. A
+   * hidden thread only renders under its parent, so its own pin never places
+   * it in Pinned: bb's Pin action is absent for it, and creating a thread in
+   * its environment does not inherit that pin.
+   */
+  isHidden?: boolean;
   status: ThreadStatus;
   /**
    * The thread's environment when a new thread can reuse it, null otherwise.
@@ -3680,6 +3696,12 @@ export interface PluginSdkApp {
   experimental_useSidebarThreads(options?: {
     /** Defaults to active threads only. An empty selection also means active. */
     experimental_lifecycles: readonly ("active" | "archived")[];
+    /**
+     * Also list hidden threads below a listed visible thread of the selected
+     * lifecycles, from any project. Hidden roots and hidden threads without a
+     * listed visible ancestor stay out. Defaults to false.
+     */
+    experimental_includeHiddenChildren?: boolean;
   }): PluginSidebarThreadsState;
   /**
    * Thread actions bound to the host's mutations (see

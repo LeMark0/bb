@@ -687,6 +687,7 @@ describe("createRealtimeCacheEffects", () => {
     vi.useFakeTimers();
     const { effects, queryClient } = createRealtimeEffectsTestContext();
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "needle",
     });
@@ -733,6 +734,7 @@ describe("createRealtimeCacheEffects", () => {
     const { effects, queryClient } =
       createRealtimeEffectsTestContext(visibility);
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "needle",
     });
@@ -803,6 +805,7 @@ describe("createRealtimeCacheEffects", () => {
     vi.useFakeTimers();
     const { effects, queryClient } = createRealtimeEffectsTestContext();
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "needle",
     });
@@ -1281,6 +1284,7 @@ describe("createRealtimeCacheEffects", () => {
     vi.useFakeTimers();
     const { effects, queryClient } = createRealtimeEffectsTestContext();
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "branch-label",
     });
@@ -2898,6 +2902,7 @@ describe("createRealtimeCacheEffects", () => {
     const threadKey = threadQueryKey("thr_1");
     const sidebarNavigationKey = sidebarNavigationQueryKey();
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "needle",
     });

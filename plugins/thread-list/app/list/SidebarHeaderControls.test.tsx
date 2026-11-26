@@ -16,6 +16,7 @@ import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
 import { SIDEBAR_CONTROL_STATE_CLASS } from "@/components/ui/sidebar-row-classes";
 import {
   sidebarThreadLifecyclesAtom,
+  sidebarShowHiddenChildrenAtom,
   sidebarChronologicalSortAtom,
   sidebarOrganizationModeAtom,
   sidebarEnvironmentGroupingAtom,
@@ -373,5 +374,30 @@ it.each([false, true])(
     expect(store.get(sidebarThreadLifecyclesAtom)).toEqual(["archived"]);
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Archived" }));
     expect(store.get(sidebarThreadLifecyclesAtom)).toEqual(["archived"]);
+  },
+);
+
+it.each([false, true])(
+  "toggles hidden children both ways without changing the lifecycles (compact=%s)",
+  async (compact) => {
+    const { store } = setup("Pinned", false, "project", compact);
+    if (compact) {
+      fireEvent.click(screen.getByRole("button", { name: /^Pinned actions(?:;|$)/ }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    } else {
+      await openMenu();
+      await openSubmenu("Filter");
+    }
+    const hidden = await screen.findByRole("menuitemcheckbox", {
+      name: "Hidden children",
+    });
+    expect(hidden.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(hidden);
+    expect(store.get(sidebarShowHiddenChildrenAtom)).toBe(true);
+    expect(hidden.getAttribute("aria-checked")).toBe("true");
+    expect(store.get(sidebarThreadLifecyclesAtom)).toEqual(["active"]);
+    fireEvent.click(hidden);
+    expect(store.get(sidebarShowHiddenChildrenAtom)).toBe(false);
+    expect(store.get(sidebarThreadLifecyclesAtom)).toEqual(["active"]);
   },
 );

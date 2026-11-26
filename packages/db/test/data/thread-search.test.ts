@@ -19,6 +19,7 @@ import {
   archiveThread,
   createThread,
   deleteThread,
+  markThreadDeleted,
   searchThreadsWithPendingInteractionState,
   updateThread,
   upsertThreadSearchSegments,
@@ -176,6 +177,7 @@ describe("thread search data", () => {
         const results = searchThreadsWithPendingInteractionState(db, {
           query,
           limitPerGroup: 20,
+          includeHidden: false,
         });
         expect(results.active.results.map((result) => result.thread.id)).toEqual(
           [thread.id],
@@ -185,6 +187,7 @@ describe("thread search data", () => {
       const secretResults = searchThreadsWithPendingInteractionState(db, {
         query: "secretbackfill",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(secretResults.active.total).toBe(0);
       expect(secretResults.archived.total).toBe(0);
@@ -195,6 +198,7 @@ describe("thread search data", () => {
       const titleUpdateResults = searchThreadsWithPendingInteractionState(db, {
         query: "titleupdatebackfill",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(
         titleUpdateResults.active.results.map((result) => result.thread.id),
@@ -270,6 +274,7 @@ describe("thread search data", () => {
       const activeResults = searchThreadsWithPendingInteractionState(db, {
         query: "livewriterneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(activeResults.active.results.map((result) => result.thread.id)).toEqual(
         [activeThread.id],
@@ -279,6 +284,7 @@ describe("thread search data", () => {
       const assistantResults = searchThreadsWithPendingInteractionState(db, {
         query: "assistantwriterneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(assistantResults.active.results[0]?.matches[0]).toMatchObject({
         sourceKind: "assistant_message",
@@ -289,6 +295,7 @@ describe("thread search data", () => {
       const archivedResults = searchThreadsWithPendingInteractionState(db, {
         query: "archivewriterneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(archivedResults.active.total).toBe(0);
       expect(
@@ -298,6 +305,7 @@ describe("thread search data", () => {
       const hiddenResults = searchThreadsWithPendingInteractionState(db, {
         query: "hiddenwriterneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(hiddenResults.active.total).toBe(0);
       expect(hiddenResults.archived.total).toBe(0);
@@ -307,6 +315,7 @@ describe("thread search data", () => {
         {
           query: "hiddenarchivedwriterneedle",
           limitPerGroup: 20,
+          includeHidden: false,
         },
       );
       expect(hiddenArchivedResults.active.total).toBe(0);
@@ -316,9 +325,127 @@ describe("thread search data", () => {
         const results = searchThreadsWithPendingInteractionState(db, {
           query,
           limitPerGroup: 20,
+          includeHidden: false,
         });
         expect(results.active.total).toBe(0);
         expect(results.archived.total).toBe(0);
+      }
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("searches hidden threads only when asked, with unchanged ranking, grouping and totals", () => {
+    const { db, project } = setup();
+    try {
+      const parent = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+        title: "Release coordination",
+      });
+      appendStoredThreadEvent(db, noopNotifier, {
+        threadId: parent.id,
+        type: "client/turn/requested",
+        scope: threadScope(),
+        data: turnRequestData([textInput("delegate hiddenchildneedle")]),
+      });
+      const hiddenTitleChild = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+        title: "hiddenchildneedle",
+        parentThreadId: parent.id,
+        visibility: "hidden",
+      });
+      const hiddenMessageChild = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+        title: "Worker notes",
+        parentThreadId: parent.id,
+        visibility: "hidden",
+      });
+      appendStoredThreadEvent(db, noopNotifier, {
+        threadId: hiddenMessageChild.id,
+        type: "client/turn/requested",
+        scope: threadScope(),
+        data: turnRequestData([textInput("hiddenchildneedle report")]),
+      });
+      const hiddenArchivedChild = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+        title: "hiddenchildneedle archived",
+        parentThreadId: parent.id,
+        visibility: "hidden",
+      });
+      archiveThread(db, noopNotifier, hiddenArchivedChild.id);
+      const hiddenDeletedChild = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+        title: "hiddenchildneedle deleted",
+        parentThreadId: parent.id,
+        visibility: "hidden",
+      });
+      markThreadDeleted(db, noopNotifier, { threadId: hiddenDeletedChild.id });
+      const setUpdatedAt = db.$client.prepare(
+        "UPDATE threads SET updated_at = ? WHERE id = ?",
+      );
+      setUpdatedAt.run(3_000, parent.id);
+      setUpdatedAt.run(2_000, hiddenMessageChild.id);
+      setUpdatedAt.run(1_000, hiddenTitleChild.id);
+
+      const visibleOnly = searchThreadsWithPendingInteractionState(db, {
+        query: "hiddenchildneedle",
+        limitPerGroup: 20,
+        includeHidden: false,
+      });
+      expect(visibleOnly.active.total).toBe(1);
+      expect(visibleOnly.active.results.map((result) => result.thread.id)).toEqual(
+        [parent.id],
+      );
+      expect(visibleOnly.archived.total).toBe(0);
+
+      const withHidden = searchThreadsWithPendingInteractionState(db, {
+        query: "hiddenchildneedle",
+        limitPerGroup: 20,
+        includeHidden: true,
+      });
+      expect(withHidden.active.total).toBe(3);
+      expect(withHidden.active.results.map((result) => result.thread.id)).toEqual(
+        [hiddenTitleChild.id, parent.id, hiddenMessageChild.id],
+      );
+      expect(withHidden.active.results[0]?.matches[0]).toMatchObject({
+        sourceKind: "title",
+        text: "hiddenchildneedle",
+      });
+      expect(withHidden.active.results[0]?.thread).toMatchObject({
+        visibility: "hidden",
+        parentThreadId: parent.id,
+        projectId: project.id,
+        archivedAt: null,
+      });
+      expect(withHidden.archived.total).toBe(1);
+      expect(
+        withHidden.archived.results.map((result) => result.thread.id),
+      ).toEqual([hiddenArchivedChild.id]);
+      expect(withHidden.archived.results[0]?.thread.visibility).toBe("hidden");
+
+      const limitedWithHidden = searchThreadsWithPendingInteractionState(db, {
+        query: "hiddenchildneedle",
+        limitPerGroup: 1,
+        includeHidden: true,
+      });
+      expect(limitedWithHidden.active.total).toBe(3);
+      expect(
+        limitedWithHidden.active.results.map((result) => result.thread.id),
+      ).toEqual([hiddenTitleChild.id]);
+
+      for (const includeHidden of [false, true]) {
+        const deletedResults = searchThreadsWithPendingInteractionState(db, {
+          query: "hiddenchildneedle deleted",
+          limitPerGroup: 20,
+          includeHidden,
+        });
+        expect(deletedResults.active.total).toBe(0);
+        expect(deletedResults.archived.total).toBe(0);
       }
     } finally {
       closeConnection(db);
@@ -350,6 +477,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "broadmatchneedle",
         limitPerGroup: 3,
+        includeHidden: false,
       });
 
       expect(results.active.total).toBe(5);
@@ -403,6 +531,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "moss plugins",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([
@@ -449,6 +578,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "fallbackneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([
@@ -493,6 +623,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "moss plugins",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([
@@ -537,6 +668,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "thread_search",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([
@@ -584,6 +716,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "moss plugins",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(
@@ -628,6 +761,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "pairedneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.total).toBe(1);
@@ -668,6 +802,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "partitionneedle",
         limitPerGroup: 2,
+        includeHidden: false,
       });
 
       expect(results.active.total).toBe(4);
@@ -715,6 +850,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "SnippetNeedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       const match = results.active.results[0]?.matches.find(
@@ -769,6 +905,7 @@ describe("thread search data", () => {
       const wholeResults = searchThreadsWithPendingInteractionState(db, {
         query: "wholeneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       expect(wholeResults.active.results[0]?.matches[0]).toMatchObject({
         text: "wholeneedle stays intact",
@@ -778,6 +915,7 @@ describe("thread search data", () => {
       const leadResults = searchThreadsWithPendingInteractionState(db, {
         query: "leadneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
       const leadMatch = leadResults.active.results[0]?.matches[0];
       expect(leadMatch?.text.startsWith("leadneedle then ")).toBe(true);
@@ -813,6 +951,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "surrogateneedle",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       const match = results.active.results[0]?.matches[0];
@@ -865,6 +1004,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "alpha beta",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([
@@ -891,6 +1031,7 @@ describe("thread search data", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query: "cafe",
         limitPerGroup: 20,
+        includeHidden: false,
       });
 
       expect(results.active.results.map((result) => result.thread.id)).toEqual([

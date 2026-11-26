@@ -500,6 +500,39 @@ describe("getCachedEnvironmentRefWorkspaceStateInvalidationQueryKeys", () => {
 });
 
 describe("optimisticallyInsertThread", () => {
+  it("puts a hidden child only into lists that asked for hidden threads", () => {
+    const { queryClient } = createQueryClientTestHarness();
+    const childrenKey = threadListQueryKey({
+      archived: false,
+      hasParent: true,
+      includeHidden: true,
+    });
+    const visibleChildrenKey = threadListQueryKey({
+      archived: false,
+      hasParent: true,
+    });
+    queryClient.setQueryData(childrenKey, []);
+    queryClient.setQueryData(visibleChildrenKey, []);
+
+    optimisticallyInsertThread(
+      queryClient,
+      makeThreadResponse({
+        id: "thr_hidden_child",
+        parentThreadId: "thr_parent",
+        visibility: "hidden",
+      }),
+    );
+
+    expect(
+      queryClient
+        .getQueryData<ThreadListEntry[]>(childrenKey)
+        ?.map((thread) => thread.id),
+    ).toEqual(["thr_hidden_child"]);
+    expect(
+      queryClient.getQueryData<ThreadListEntry[]>(visibleChildrenKey),
+    ).toEqual([]);
+  });
+
   it("does not treat the prefix-only threads key as an active thread list", () => {
     const { queryClient } = createQueryClientTestHarness();
     queryClient.setQueryData(threadsQueryKey(), []);

@@ -25,6 +25,46 @@ function createHost(host: { id: string; name: string }) {
 }
 
 describe("buildMachineThreadGroups", () => {
+  it("keeps a hidden child on another machine with its parent and visible children on their own", () => {
+    const hosts = [
+      createHost({ id: "host_a", name: "Laptop" }),
+      createHost({ id: "host_b", name: "Desktop" }),
+    ];
+    const groups = buildMachineThreadGroups(
+      [
+        createThread({ id: "parent", host: { id: "host_a", name: "Laptop" } }),
+        createThread({
+          id: "hidden_child",
+          parentThreadId: "parent",
+          isHidden: true,
+          host: { id: "host_b", name: "Desktop" },
+        }),
+        createThread({
+          id: "hidden_grandchild",
+          parentThreadId: "hidden_child",
+          isHidden: true,
+          host: null,
+        }),
+        createThread({
+          id: "visible_child",
+          parentThreadId: "parent",
+          host: { id: "host_b", name: "Desktop" },
+        }),
+      ],
+      hosts,
+    );
+
+    expect(
+      groups.map((group) => [
+        group.key,
+        group.threads.map((thread) => thread.id),
+      ]),
+    ).toEqual([
+      ["host_a", ["parent", "hidden_child", "hidden_grandchild"]],
+      ["host_b", ["visible_child"]],
+    ]);
+  });
+
   it("orders known hosts by server order, then unknown hosts, then no-machine", () => {
     const hosts = [
       createHost({ id: "host_a", name: "Laptop" }),

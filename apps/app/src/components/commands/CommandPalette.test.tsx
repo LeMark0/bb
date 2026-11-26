@@ -11,7 +11,10 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { createStore, Provider } from "jotai";
-import { paletteThreadLifecyclesAtom } from "@/lib/command-palette/palette-preferences";
+import {
+  paletteThreadIncludeHiddenAtom,
+  paletteThreadLifecyclesAtom,
+} from "@/lib/command-palette/palette-preferences";
 import { splitLayoutAtom } from "@/lib/split-layout/atoms";
 import { MAX_PANES, type SplitLayout } from "@/lib/split-layout";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -126,6 +129,7 @@ const modeState = vi.hoisted(() => ({
   recentError: false,
   searchLoading: false,
   searchError: false,
+  searchIncludeHidden: [] as boolean[],
 }));
 const routeNavigateMock = vi.hoisted(() => vi.fn());
 const openThreadInSplitMock = vi.hoisted(() => vi.fn());
@@ -255,15 +259,24 @@ vi.mock("@/hooks/queries/thread-queries", async (importOriginal) => {
     await importOriginal<typeof import("@/hooks/queries/thread-queries")>();
   return {
     ...actual,
-    useThreadSearch: ({ query }: { query: string }) => ({
-      data: modeState.searchResponse,
-      debouncedQuery: query.trim(),
-      hasSearchableQuery: query.trim().length >= 2,
-      isDebouncing: false,
-      isError: modeState.searchError,
-      isFetching: false,
-      isLoading: modeState.searchLoading,
-    }),
+    useThreadSearch: ({
+      includeHidden,
+      query,
+    }: {
+      includeHidden?: boolean;
+      query: string;
+    }) => {
+      modeState.searchIncludeHidden.push(includeHidden ?? false);
+      return {
+        data: modeState.searchResponse,
+        debouncedQuery: query.trim(),
+        hasSearchableQuery: query.trim().length >= 2,
+        isDebouncing: false,
+        isError: modeState.searchError,
+        isFetching: false,
+        isLoading: modeState.searchLoading,
+      };
+    },
   };
 });
 
@@ -419,6 +432,7 @@ afterEach(() => {
   modeState.recentError = false;
   modeState.searchLoading = false;
   modeState.searchError = false;
+  modeState.searchIncludeHidden.length = 0;
   routeNavigateMock.mockReset();
   openThreadInSplitMock.mockReset();
   window.localStorage.clear();
@@ -1870,6 +1884,83 @@ describe("CommandPalette", () => {
     ).toBeNull();
     act(() => resetPluginThreadRowStatusesForTest());
     expect(within(row).queryByRole("img")).toBeNull();
+  });
+
+  it("forwards the hidden-thread option, marks hidden matches and opens them in their own project", async () => {
+    modeState.searchResponse = {
+      active: {
+        total: 2,
+        results: [
+          {
+            thread: makeThread("hidden-target", {
+              projectId: "project-other",
+              parentThreadId: "visible-parent",
+              title: "Exact hidden title",
+              visibility: "hidden",
+            }),
+            matches: [
+              {
+                sourceKind: "title",
+                text: "Exact hidden title",
+                sourceSeq: null,
+                highlightRanges: [{ start: 0, end: 18 }],
+              },
+            ],
+          },
+          { thread: makeThread("visible-match"), matches: [] },
+        ],
+      },
+      archived: { total: 0, results: [] },
+    };
+    const { store } = renderPalette();
+    openThreadSearch();
+    const input = await screen.findByRole("combobox", {
+      name: "Search threads",
+    });
+    fireEvent.change(input, { target: { value: "Exact hidden title" } });
+    expect(modeState.searchIncludeHidden.at(-1)).toBe(false);
+    const trigger = screen.getByRole("button", {
+      name: "Filter and sort: Active, Relevance",
+    });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.click(
+      await screen.findByRole("menuitemcheckbox", { name: "Hidden threads" }),
+    );
+    expect(store.get(paletteThreadIncludeHiddenAtom)).toBe(true);
+    expect(modeState.searchIncludeHidden.at(-1)).toBe(true);
+    expect(trigger.getAttribute("aria-label")).toBe(
+      "Filter and sort: Active, including hidden, Relevance",
+    );
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+    const results = screen.getByRole("listbox", { name: "Threads" });
+    const hiddenRow = within(results).getByRole("option", {
+      name: /Exact hidden title/,
+    });
+    expect(
+      within(hiddenRow).getByRole("img", { name: "Hidden thread" }),
+    ).toBeTruthy();
+    const visibleRow = within(results).getByRole("option", {
+      name: /Title visible-match/,
+    });
+    expect(
+      within(visibleRow).queryByRole("img", { name: "Hidden thread" }),
+    ).toBeNull();
+    fireEvent.click(hiddenRow);
+    await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+    expect(routeNavigateMock).toHaveBeenCalledWith(
+      "/projects/project-other/threads/hidden-target",
+      { state: undefined },
+    );
+
+    act(() => store.set(paletteThreadIncludeHiddenAtom, false));
+    openThreadSearch();
+    fireEvent.change(
+      await screen.findByRole("combobox", { name: "Search threads" }),
+      { target: { value: "Exact hidden title" } },
+    );
+    expect(modeState.searchIncludeHidden.at(-1)).toBe(false);
   });
 
   it("opens an archived message match with its anchor", async () => {

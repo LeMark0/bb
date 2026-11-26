@@ -30,6 +30,7 @@ function ViewMenu() {
   const [lifecycles, setLifecycles] = useState<ThreadArchiveFilter[]>([
     "active",
   ]);
+  const [includeHidden, setIncludeHidden] = useState(false);
   const [sort, setSort] = useState<PaletteThreadSort>("relevance");
   const [direction, setDirection] =
     useState<PaletteThreadSortDirection>("descending");
@@ -37,6 +38,8 @@ function ViewMenu() {
     <PaletteThreadViewMenu
       lifecycles={lifecycles}
       onLifecyclesChange={setLifecycles}
+      includeHidden={includeHidden}
+      onIncludeHiddenChange={setIncludeHidden}
       sort={sort}
       sortDirection={direction}
       onSortChange={(nextSort, nextDirection) => {
@@ -94,6 +97,37 @@ describe("PaletteThreadViewMenu", () => {
       expect(container.closest('[aria-hidden="true"]')).toBeNull();
     },
   );
+
+  it("toggles hidden threads both ways without touching the lifecycle selection", async () => {
+    render(<ViewMenu />);
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Filter and sort: Active, Relevance" }),
+      { key: "Enter" },
+    );
+    const hidden = await screen.findByRole("menuitemcheckbox", {
+      name: "Hidden threads",
+    });
+    expect(hidden.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(hidden);
+    expect(hidden.getAttribute("aria-checked")).toBe("true");
+    expect(
+      await screen.findByRole("button", {
+        name: "Filter and sort: Active, including hidden, Relevance",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("menuitemcheckbox", { name: "Active" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    fireEvent.click(hidden);
+    expect(hidden.getAttribute("aria-checked")).toBe("false");
+    expect(
+      await screen.findByRole("button", {
+        name: "Filter and sort: Active, Relevance",
+      }),
+    ).toBeTruthy();
+  });
 
   it("describes the settings without changing the icon and reverses the selected sort", async () => {
     render(<ViewMenu />);

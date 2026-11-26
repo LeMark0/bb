@@ -352,6 +352,7 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
         ...searchThreadsWithPendingInteractionState(deps.db, {
           query: searchQuery,
           limitPerGroup,
+          includeHidden: query.includeHidden === "true",
         }),
       }) satisfies ThreadSearchResponse,
     );

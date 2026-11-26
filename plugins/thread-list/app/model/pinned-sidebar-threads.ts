@@ -104,7 +104,7 @@ export function buildPinnedSidebarState({
   threads,
 }: BuildPinnedSidebarStateArgs): PinnedSidebarState {
   const explicitlyPinnedThreads = threads.filter(
-    (thread) => thread.pinnedAt !== null,
+    (thread) => thread.pinnedAt !== null && !thread.isHidden,
   );
   const childrenByParentId = new Map<string, SidebarThread[]>();
 

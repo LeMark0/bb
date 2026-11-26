@@ -964,6 +964,8 @@ export type ThreadRunningResponse = z.infer<typeof threadRunningResponseSchema>;
 export const threadSearchQuerySchema = z.object({
   query: z.string().trim().min(2),
   limitPerGroup: z.string().regex(/^\d+$/).optional(),
+  /** Search hidden threads too; omitted/false searches visible threads only. */
+  includeHidden: z.enum(["true", "false"]).optional(),
 });
 export type ThreadSearchQuery = z.infer<typeof threadSearchQuerySchema>;
 

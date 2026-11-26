@@ -106,6 +106,12 @@ export const preferenceDefinitions = {
     "Thread lifecycles shown in the list: active, archived, or both. At least one is required.",
     null,
   ),
+  showHiddenChildren: definePreference(
+    z.boolean(),
+    false,
+    "Also list hidden child threads under their parent, including children from other projects, for the selected lifecycles. Hidden root threads stay out of the list.",
+    null,
+  ),
   organizationMode: definePreference(
     organizationModeSchema,
     "chronological",

@@ -64,10 +64,28 @@ const archiveQuery = vi.hoisted(() => ({
   fetchNextPage: vi.fn(async () => undefined),
 }));
 const archiveEnabled = vi.hoisted(() => vi.fn());
+const hiddenChildQueries = vi.hoisted(() => {
+  const make = () => ({
+    data: undefined as ThreadListEntry[] | undefined,
+    isError: false,
+    refetch: vi.fn(async () => undefined),
+  });
+  return { active: make(), archived: make(), enabled: vi.fn() };
+});
 vi.mock("@/hooks/queries/thread-queries", () => ({
   useArchivedThreads: (_filters: object, options: { enabled: boolean }) => {
     archiveEnabled(options.enabled);
     return archiveQuery;
+  },
+  useHiddenChildThreads: ({
+    archived,
+    enabled,
+  }: {
+    archived: boolean;
+    enabled: boolean;
+  }) => {
+    hiddenChildQueries.enabled(archived, enabled);
+    return archived ? hiddenChildQueries.archived : hiddenChildQueries.active;
   },
 }));
 
@@ -164,6 +182,13 @@ afterEach(() => {
   archiveQuery.data = undefined;
   archiveQuery.isLoadingError = false;
   archiveQuery.hasNextPage = false;
+  for (const query of [
+    hiddenChildQueries.active,
+    hiddenChildQueries.archived,
+  ]) {
+    query.data = undefined;
+    query.isError = false;
+  }
   drafts.threadIds.clear();
   clearPluginThreadRowStatuses("plugin-a");
   environmentProviders.providers = undefined;
@@ -274,6 +299,172 @@ describe("sidebar lifecycle selection", () => {
     archiveQuery.data = { pages: [[archived]] };
     const { result } = renderHook(() => useSidebarThreadEntry(archived.id));
     expect(result.current).toBe(archived);
+  });
+});
+
+describe("useSidebarThreads hidden children", () => {
+  type Lifecycle = "active" | "archived";
+  function renderSidebar(initialProps: {
+    lifecycles: Lifecycle[];
+    includeHiddenChildren: boolean;
+  }) {
+    return renderHook(
+      ({ lifecycles, includeHiddenChildren }) =>
+        useSidebarThreads({
+          experimental_lifecycles: lifecycles,
+          experimental_includeHiddenChildren: includeHiddenChildren,
+        }),
+      { initialProps },
+    );
+  }
+  const ids = (threads: readonly { id: string }[]) =>
+    threads.map((thread) => thread.id);
+
+  it("adds hidden descendants of listed threads, across projects, and removes them again", () => {
+    const parent = makeThreadListEntry({
+      id: "thr_parent",
+      projectId: "proj_app",
+    });
+    const hiddenChild = makeThreadListEntry({
+      id: "thr_hidden_child",
+      projectId: "proj_other",
+      parentThreadId: parent.id,
+      visibility: "hidden",
+    });
+    const hiddenGrandchild = makeThreadListEntry({
+      id: "thr_hidden_grandchild",
+      projectId: "proj_third",
+      parentThreadId: hiddenChild.id,
+      visibility: "hidden",
+    });
+    const hiddenRoot = makeThreadListEntry({
+      id: "thr_hidden_root",
+      visibility: "hidden",
+    });
+    const underHiddenRoot = makeThreadListEntry({
+      id: "thr_under_hidden_root",
+      parentThreadId: hiddenRoot.id,
+      visibility: "hidden",
+    });
+    const orphan = makeThreadListEntry({
+      id: "thr_orphan",
+      parentThreadId: "thr_not_listed",
+      visibility: "hidden",
+    });
+    state.data = payload([parent]);
+    hiddenChildQueries.active.data = [
+      underHiddenRoot,
+      hiddenGrandchild,
+      orphan,
+      hiddenChild,
+      parent,
+    ];
+    const { result, rerender } = renderSidebar({
+      lifecycles: ["active"],
+      includeHiddenChildren: false,
+    });
+    expect(hiddenChildQueries.enabled).toHaveBeenLastCalledWith(true, false);
+    expect(ids(result.current.threads)).toEqual([parent.id]);
+    expect(result.current.experimental_hiddenChildren).toBeNull();
+    const parentRow = result.current.threads[0];
+
+    rerender({ lifecycles: ["active"], includeHiddenChildren: true });
+    expect(hiddenChildQueries.enabled).toHaveBeenCalledWith(false, true);
+    expect(ids(result.current.threads)).toEqual([
+      parent.id,
+      hiddenGrandchild.id,
+      hiddenChild.id,
+    ]);
+    expect(result.current.threads[0]).toBe(parentRow);
+    const child = result.current.threads.find(
+      (thread) => thread.id === hiddenChild.id,
+    );
+    expect(child).toMatchObject({
+      isHidden: true,
+      parentThreadId: parent.id,
+      projectId: "proj_other",
+      isArchived: false,
+    });
+    expect(result.current.experimental_hiddenChildren?.status).toBe("ready");
+
+    rerender({ lifecycles: ["active"], includeHiddenChildren: false });
+    expect(ids(result.current.threads)).toEqual([parent.id]);
+    expect(result.current.threads[0]).toBe(parentRow);
+  });
+
+  it("follows the lifecycle filter for hidden children of archived parents", () => {
+    const active = makeThreadListEntry({ id: "thr_active" });
+    const archivedParent = makeThreadListEntry({
+      id: "thr_archived_parent",
+      archivedAt: 42,
+    });
+    const archivedHidden = makeThreadListEntry({
+      id: "thr_archived_hidden",
+      parentThreadId: archivedParent.id,
+      visibility: "hidden",
+      archivedAt: 43,
+    });
+    const activeHiddenUnderArchived = makeThreadListEntry({
+      id: "thr_active_hidden_under_archived",
+      parentThreadId: archivedParent.id,
+      visibility: "hidden",
+    });
+    state.data = payload([active]);
+    archiveQuery.data = { pages: [[archivedParent]] };
+    hiddenChildQueries.active.data = [activeHiddenUnderArchived];
+    hiddenChildQueries.archived.data = [archivedHidden];
+    const { result, rerender } = renderSidebar({
+      lifecycles: ["active"],
+      includeHiddenChildren: true,
+    });
+    expect(ids(result.current.threads)).toEqual([active.id]);
+    rerender({ lifecycles: ["archived"], includeHiddenChildren: true });
+    expect(hiddenChildQueries.enabled).toHaveBeenLastCalledWith(true, true);
+    expect(ids(result.current.threads)).toEqual([
+      archivedParent.id,
+      archivedHidden.id,
+    ]);
+    rerender({
+      lifecycles: ["active", "archived"],
+      includeHiddenChildren: true,
+    });
+    expect(ids(result.current.threads)).toEqual([
+      archivedParent.id,
+      active.id,
+      activeHiddenUnderArchived.id,
+      archivedHidden.id,
+    ]);
+  });
+
+  it("reports loading and errors without hiding listed rows, and retries", async () => {
+    const parent = makeThreadListEntry({ id: "thr_parent" });
+    state.data = payload([parent]);
+    const { result, rerender } = renderSidebar({
+      lifecycles: ["active"],
+      includeHiddenChildren: true,
+    });
+    expect(result.current.status).toBe("ready");
+    expect(result.current.experimental_hiddenChildren?.status).toBe("loading");
+    expect(ids(result.current.threads)).toEqual([parent.id]);
+    hiddenChildQueries.active.isError = true;
+    rerender({ lifecycles: ["active"], includeHiddenChildren: true });
+    expect(result.current.experimental_hiddenChildren?.status).toBe("error");
+    expect(ids(result.current.threads)).toEqual([parent.id]);
+    await result.current.experimental_hiddenChildren?.retry();
+    expect(hiddenChildQueries.active.refetch).toHaveBeenCalledOnce();
+    expect(hiddenChildQueries.archived.refetch).not.toHaveBeenCalled();
+  });
+
+  it("resolves a cached hidden child for host-owned row lookups", () => {
+    const hidden = makeThreadListEntry({
+      id: "thr_hidden_child",
+      parentThreadId: "thr_parent",
+      visibility: "hidden",
+    });
+    state.data = payload([]);
+    hiddenChildQueries.active.data = [hidden];
+    const { result } = renderHook(() => useSidebarThreadEntry(hidden.id));
+    expect(result.current).toBe(hidden);
   });
 });
 
@@ -520,6 +711,24 @@ describe("per-row client state hooks", () => {
       drafts.notify();
     });
     expect([...result.current].sort()).toEqual(["thr_1", "thr_2"]);
+  });
+
+  it("keeps cached hidden children out of draft enumeration but resolves them by id", () => {
+    const hidden = makeThreadListEntry({
+      id: "thr_hidden_child",
+      projectId: "proj_app",
+      parentThreadId: "thr_1",
+      visibility: "hidden",
+    });
+    state.data = payload([
+      makeThreadListEntry({ id: "thr_1", projectId: "proj_app" }),
+    ]);
+    hiddenChildQueries.active.data = [hidden];
+    drafts.threadIds.add(hidden.id);
+    const ids = renderHook(() => useSidebarThreadDraftIds());
+    expect([...ids.result.current]).toEqual([]);
+    const draft = renderHook(() => useSidebarThreadDraft(hidden.id));
+    expect(draft.result.current.hasUnsubmittedDraft).toBe(true);
   });
 
   it("reads and tracks a row status set by another plugin", () => {

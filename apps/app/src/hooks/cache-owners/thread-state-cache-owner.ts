@@ -644,7 +644,7 @@ export function beginUnarchiveThreadTransaction({
           (candidate) => candidate.id === threadId,
         );
       removeThreadFromLists(queryClient, threadId);
-      if (!thread) return;
+      if (!thread || thread.visibility === "hidden") return;
       applyToCachedSidebarNavigationThreads({
         queryClient,
         mapper: (list, projectId) =>

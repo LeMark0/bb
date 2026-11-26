@@ -49,6 +49,7 @@ import {
   threadQueryOptions,
   threadQueuedMessagesQueryOptions,
   threadStorageLocationQueryOptions,
+  threadSearchQueryOptions,
   threadTimelineQueryOptions,
 } from "./thread-queries";
 import {
@@ -429,6 +430,50 @@ describe("useThreadDetailBootstrap", () => {
       signal: expect.any(AbortSignal),
       threadId: "thread-1",
     });
+  });
+});
+
+describe("threadSearchQueryOptions", () => {
+  it("keeps hidden and visible-only results in separate cache entries", async () => {
+    const { queryClient } = createQueryClientTestHarness();
+    const hidden = makeThreadListEntry({
+      id: "hidden-match",
+      visibility: "hidden",
+    });
+    const visible = makeThreadListEntry({ id: "visible-match" });
+    vi.mocked(sdk.threads.search).mockImplementation(async (args) => ({
+      active: {
+        total: args.includeHidden ? 2 : 1,
+        results: [
+          ...(args.includeHidden ? [{ thread: hidden, matches: [] }] : []),
+          { thread: visible, matches: [] },
+        ],
+      },
+      archived: { total: 0, results: [] },
+    }));
+    const options = (includeHidden: boolean) =>
+      threadSearchQueryOptions({
+        enabled: true,
+        includeHidden,
+        limitPerGroup: 20,
+        query: "match",
+      });
+    const ids = (includeHidden: boolean) =>
+      queryClient
+        .getQueryData(options(includeHidden).queryKey)
+        ?.active.results.map((result) => result.thread.id);
+
+    await queryClient.fetchQuery(options(false));
+    await queryClient.fetchQuery(options(true));
+    await queryClient.fetchQuery(options(false));
+
+    expect(ids(true)).toEqual(["hidden-match", "visible-match"]);
+    expect(ids(false)).toEqual(["visible-match"]);
+    expect(
+      vi
+        .mocked(sdk.threads.search)
+        .mock.calls.map(([args]) => args.includeHidden),
+    ).toEqual([undefined, true]);
   });
 });
 

@@ -216,6 +216,7 @@ describe("thread search ranking evals", () => {
       const results = searchThreadsWithPendingInteractionState(db, {
         query,
         limitPerGroup: 20,
+        includeHidden: false,
       })[group];
       const titles = results.results.map(
         (result) => result.thread.title ?? result.thread.titleFallback ?? "",

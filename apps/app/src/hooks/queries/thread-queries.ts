@@ -192,6 +192,7 @@ interface UseThreadMentionCandidatesResult {
 
 interface UseThreadSearchArgs {
   active: boolean;
+  includeHidden?: boolean;
   limitPerGroup?: number;
   query: string;
 }
@@ -385,6 +386,25 @@ export function useArchivedThreads(
 ) {
   useThreadListRealtimeSubscription({ enabled: options?.enabled ?? true });
   return useInfiniteQuery(archivedThreadsQueryOptions(filters, options));
+}
+
+interface UseHiddenChildThreadsArgs {
+  archived: boolean;
+  enabled: boolean;
+}
+
+export function useHiddenChildThreads({
+  archived,
+  enabled,
+}: UseHiddenChildThreadsArgs) {
+  useThreadListRealtimeSubscription({ enabled });
+  const filters = { archived, hasParent: true, includeHidden: true };
+  return useQuery<ThreadListResponse>({
+    queryKey: threadListQueryKey(filters),
+    queryFn: ({ signal }) => sdk.threads.list({ ...filters, signal }),
+    enabled,
+    staleTime: THREAD_LIST_STALE_TIME_MS,
+  });
 }
 
 export function useThreads(filters: UseThreadsFilters, options?: QueryOptions) {
@@ -676,8 +696,36 @@ export function useThreadMentionCandidates({
   });
 }
 
+interface ThreadSearchQueryOptionsArgs {
+  enabled: boolean;
+  includeHidden: boolean;
+  limitPerGroup: number;
+  query: string;
+}
+
+export function threadSearchQueryOptions({
+  enabled,
+  includeHidden,
+  limitPerGroup,
+  query,
+}: ThreadSearchQueryOptionsArgs) {
+  return queryOptions<ThreadSearchResponse>({
+    queryKey: threadSearchQueryKey({ includeHidden, limitPerGroup, query }),
+    queryFn: ({ signal }) =>
+      sdk.threads.search({
+        ...(includeHidden ? { includeHidden: true } : {}),
+        limitPerGroup: String(limitPerGroup),
+        query,
+        signal,
+      }),
+    enabled,
+    staleTime: THREAD_SEARCH_STALE_TIME_MS,
+  });
+}
+
 export function useThreadSearch({
   active,
+  includeHidden = false,
   limitPerGroup = THREAD_SEARCH_LIMIT_PER_GROUP,
   query,
 }: UseThreadSearchArgs): UseThreadSearchResult {
@@ -689,20 +737,14 @@ export function useThreadSearch({
   const isDebouncing =
     active && liveQueryIsSearchable && trimmedQuery !== debouncedQuery;
   const enabled = active && liveQueryIsSearchable && hasSearchableQuery;
-  const threadSearchQuery = useQuery<ThreadSearchResponse>({
-    queryKey: threadSearchQueryKey({
+  const threadSearchQuery = useQuery(
+    threadSearchQueryOptions({
+      enabled,
+      includeHidden,
       limitPerGroup,
       query: debouncedQuery,
     }),
-    queryFn: ({ signal }) =>
-      sdk.threads.search({
-        limitPerGroup: String(limitPerGroup),
-        query: debouncedQuery,
-        signal,
-      }),
-    enabled,
-    staleTime: THREAD_SEARCH_STALE_TIME_MS,
-  });
+  );
 
   return {
     data: threadSearchQuery.data,

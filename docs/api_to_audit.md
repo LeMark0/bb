@@ -2125,6 +2125,16 @@ doc covers three September 2026 additions:
   query order, including those with no threads. Older hosts may omit it.
 - `openNewThread({ hostId })`, unprefixed by request, preselects a machine for
   a new environment. `environmentId` takes priority.
+- `experimental_includeHiddenChildren` (November 2026, default false) adds
+  hidden threads whose parent chain reaches a listed visible thread of the
+  selected lifecycles, from any project. Hidden roots and hidden threads
+  without a listed visible ancestor stay out. The host reads them with
+  `threads.list({ hasParent: true, includeHidden: true, archived })`, one
+  unpaged read per selected lifecycle, and
+  `PluginSidebarThreadsState.experimental_hiddenChildren` reports its
+  loading/error state with `retry()`; it is null when not requested and older
+  hosts omit it. The built-in Thread list's Hidden children option is the core
+  caller.
 
 Docs: `frontend-registration.md`.
 
@@ -2227,7 +2237,12 @@ for every menu and the quick-action picker. bb's groups, in menu order, are
 `open` (split, copy link), `state` (pin, read, notifications), `organize`
 (rename, move), `settings`, and `lifecycle` (archive, delete). Thread-list
 registers Move to section, and push-notifications registers Notifications. The SDK test fake
-throws when a menu `trigger` drops its props and ref.
+throws when a menu `trigger` drops its props and ref. The target's optional
+`isHidden` is true for a thread with `visibility: "hidden"` and omitted means
+visible, so plugins that build targets without it keep compiling. A hidden
+thread renders only under its parent, so its own pin never places it in
+Pinned: bb's Pin returns null for it, and New thread in environment does not
+inherit its pin.
 
 **Core callers.** bb's own actions are `CORE_THREAD_ACTIONS`
 (`apps/app/src/lib/thread-actions/core-thread-actions.ts`), registered under

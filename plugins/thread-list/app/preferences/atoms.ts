@@ -45,5 +45,7 @@ export const sidebarCollapsedMachinesAtom =
 
 export const sidebarThreadLifecyclesAtom =
   createSyncedPreferenceAtom("threadLifecycles");
+export const sidebarShowHiddenChildrenAtom =
+  createSyncedPreferenceAtom("showHiddenChildren");
 export const sidebarShowProviderIconsAtom =
   createSyncedPreferenceAtom("showProviderIcons");

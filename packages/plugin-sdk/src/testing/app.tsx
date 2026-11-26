@@ -2083,6 +2083,8 @@ export function renderSlot<
   const sidebarThreads: PluginSidebarThreadsState = {
     experimental_archived:
       options.sidebarThreads?.experimental_archived ?? null,
+    experimental_hiddenChildren:
+      options.sidebarThreads?.experimental_hiddenChildren ?? null,
     status: options.sidebarThreads?.status ?? "ready",
     threads: options.sidebarThreads?.threads ?? [],
     experimental_hosts: options.sidebarThreads?.experimental_hosts ?? [],

@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import { useAtomValue } from "jotai";
-import { sidebarThreadLifecyclesAtom } from "../preferences/atoms.js";
+import {
+  sidebarShowHiddenChildrenAtom,
+  sidebarThreadLifecyclesAtom,
+} from "../preferences/atoms.js";
 import {
   experimental_useSidebarThreads,
   type PluginSidebarProject,
@@ -189,11 +192,17 @@ export function useSidebarProjectName(
 
 export function useSidebarData() {
   const lifecycles = useAtomValue(sidebarThreadLifecyclesAtom);
+  const includeHiddenChildren = useAtomValue(sidebarShowHiddenChildrenAtom);
   const state = experimental_useSidebarThreads({
     experimental_lifecycles: lifecycles,
+    experimental_includeHiddenChildren: includeHiddenChildren,
   });
   return useMemo(
-    () => ({ ...getSidebarData(state), archived: state.experimental_archived }),
+    () => ({
+      ...getSidebarData(state),
+      archived: state.experimental_archived,
+      hiddenChildren: state.experimental_hiddenChildren ?? null,
+    }),
     [state],
   );
 }

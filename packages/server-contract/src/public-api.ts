@@ -1336,6 +1336,11 @@ export const publicApiRoutes = {
       request: noRequest(),
       response: jsonResponse<ThreadRunningResponse>(),
     }),
+    /**
+     * Title and message search across every project, grouped into active and
+     * archived matches. Deleted threads never match; hidden threads match only
+     * with `includeHidden=true`, and keep their stored `visibility`.
+     */
     search: defineRoute({
       path: "/threads/search",
       method: "get",

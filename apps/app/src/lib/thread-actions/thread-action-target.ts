@@ -14,6 +14,7 @@ export function toThreadActionTarget(
     pinnedAt: thread.pinnedAt,
     sectionId: thread.sectionId,
     isUnread: !isThreadRead(thread),
+    isHidden: thread.visibility === "hidden",
     status: thread.status,
     environment,
   };
