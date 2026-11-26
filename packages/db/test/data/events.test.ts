@@ -144,6 +144,7 @@ function listSearchNeedleThreadIds(
   return searchThreadsWithPendingInteractionState(db, {
     query,
     limitPerGroup: 20,
+    includeHidden: false,
   }).active.results.map((result) => result.thread.id);
 }
 

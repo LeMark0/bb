@@ -46,6 +46,34 @@ describe("bb thread organization commands", () => {
   const register: CommandRegistrar = (program) =>
     registerThreadCommands(program, () => "http://server");
 
+  it.each([
+    { flags: ["--include-hidden"], includeHidden: "true" },
+    { flags: [], includeHidden: undefined },
+  ])(
+    "searches threads with $flags forwarding includeHidden $includeHidden",
+    async ({ flags, includeHidden }) => {
+      const search = vi.fn(async () => ({
+        active: { total: 0, results: [] },
+        archived: { total: 0, results: [] },
+      }));
+      stubServerApi({ "v1.threads.search.$get": search });
+
+      await runCommand(
+        ["thread", "search", "needle", "--limit", "5", ...flags, "--json"],
+        register,
+      );
+
+      const [request] = search.mock.calls[0] as unknown as [
+        { query: Record<string, unknown> },
+      ];
+      expect(request.query).toStrictEqual({
+        limitPerGroup: "5",
+        query: "needle",
+        ...(includeHidden === undefined ? {} : { includeHidden }),
+      });
+    },
+  );
+
   it("creates a named thread section", async () => {
     const create = vi.fn(async () => ({
       id: "section-review",

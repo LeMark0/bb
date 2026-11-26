@@ -5,7 +5,11 @@ import {
   makeProjectWithThreadsResponse,
   makeSidebarBootstrapResponse,
 } from "@/test/fixtures/projects";
-import { archivedThreadsListQueryKey, sidebarNavigationQueryKey } from "../queries/query-keys";
+import {
+  archivedThreadsListQueryKey,
+  sidebarNavigationQueryKey,
+  threadListQueryKey,
+} from "../queries/query-keys";
 import {
   beginUnarchiveThreadTransaction,
   rollbackThreadListMutationTransaction,
@@ -63,4 +67,53 @@ describe("sidebar archive cache", () => {
       expect(queryClient.getQueryData(archivedKey)).toEqual(pages);
     },
   );
+
+  it("keeps a pending unarchive of a hidden child out of the visible sidebar", async () => {
+    const queryClient = new QueryClient();
+    const hiddenChildrenKey = threadListQueryKey({
+      archived: true,
+      hasParent: true,
+      includeHidden: true,
+    });
+    const hidden = makeThreadListEntry({
+      id: "hidden-child",
+      projectId: "project-1",
+      parentThreadId: "parent",
+      visibility: "hidden",
+      archivedAt: 100,
+    });
+    const parent = makeThreadListEntry({
+      id: "parent",
+      projectId: "project-1",
+    });
+    const navigation = makeSidebarBootstrapResponse({
+      projects: [
+        makeProjectWithThreadsResponse({ id: "project-1", threads: [parent] }),
+      ],
+      personalProject: makeProjectWithThreadsResponse({
+        id: "proj_personal",
+        kind: "personal",
+        threads: [],
+      }),
+    });
+    queryClient.setQueryData(hiddenChildrenKey, [hidden]);
+    queryClient.setQueryData(sidebarNavigationQueryKey(), navigation);
+
+    const transaction = await beginUnarchiveThreadTransaction({
+      queryClient,
+      threadId: hidden.id,
+    });
+
+    expect(queryClient.getQueryData(sidebarNavigationQueryKey())).toEqual(
+      navigation,
+    );
+    expect(queryClient.getQueryData(hiddenChildrenKey)).toEqual([]);
+
+    rollbackThreadListMutationTransaction({
+      queryClient,
+      threadId: hidden.id,
+      transaction,
+    });
+    expect(queryClient.getQueryData(hiddenChildrenKey)).toEqual([hidden]);
+  });
 });

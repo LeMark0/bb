@@ -12,7 +12,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, Provider } from "jotai";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   experimental_THREAD_ACTION_GROUPS,
@@ -436,6 +436,47 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
       ],
     },
     {
+      state: "a pinned hidden child thread",
+      thread: makeThreadListEntry({
+        ...baseThread,
+        visibility: "hidden",
+        pinnedAt: 3,
+        parentThreadId: "thr_parent",
+        environmentPath: null,
+      }),
+      route: "/",
+      layout: null,
+      desktop: [
+        "Open in split",
+        "Copy link",
+        "---",
+        "Mark unread",
+        "---",
+        "Rename",
+        "---",
+        "Customize actions",
+        "---",
+        "Archive",
+        "Delete",
+        "---",
+        "Notifications",
+      ],
+      compact: [
+        "Copy link",
+        "---",
+        "Mark unread",
+        "---",
+        "Rename",
+        "---",
+        "Customize actions",
+        "---",
+        "Archive",
+        "Delete",
+        "---",
+        "Notifications",
+      ],
+    },
+    {
       state: "the thread already in view",
       thread: baseThread,
       route: getThreadRoutePath({
@@ -694,6 +735,52 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
     expect(within(menu).queryByRole("menuitem", { name: "Boom" })).toBeNull();
     expect(error).toHaveBeenCalled();
   });
+});
+
+describe("new thread in environment placement", () => {
+  function PlacementProbe() {
+    const { state } = useLocation();
+    return <output data-testid="placement">{JSON.stringify(state)}</output>;
+  }
+
+  const compactDrawer = SURFACES.find(
+    (surface) => surface.name === "compact drawer",
+  );
+  if (compactDrawer === undefined) throw new Error("compact drawer missing");
+  const withProbe: Surface = {
+    ...compactDrawer,
+    render: (options) => (
+      <>
+        {compactDrawer.render(options)}
+        <PlacementProbe />
+      </>
+    ),
+  };
+
+  it.each([
+    { state: "a pinned visible thread", visibility: "visible", pinned: true },
+    { state: "a pinned hidden thread", visibility: "hidden", pinned: false },
+  ] as const)(
+    "inherits the pin only from $state",
+    async ({ visibility, pinned }) => {
+      renderSurface(withProbe, {
+        thread: makeThreadListEntry({ ...baseThread, visibility, pinnedAt: 3 }),
+      });
+      await withProbe.open();
+      fireEvent.click(
+        await screen.findByRole("menuitem", {
+          name: "New thread in environment",
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          JSON.parse(screen.getByTestId("placement").textContent ?? "null"),
+        ).toMatchObject({
+          placement: { sectionId: baseThread.sectionId, pinned },
+        }),
+      );
+    },
+  );
 });
 
 describe("thread action run containment", () => {

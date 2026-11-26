@@ -106,7 +106,12 @@ export interface ThreadListArgs {
   unsectioned?: boolean;
 }
 
-export interface ThreadSearchArgs extends ThreadSearchQuery {
+export interface ThreadSearchArgs extends Omit<
+  ThreadSearchQuery,
+  "includeHidden"
+> {
+  /** Search hidden threads too; omitted or false searches visible threads only. */
+  includeHidden?: boolean;
   signal?: AbortSignal;
 }
 
@@ -860,6 +865,9 @@ function searchQuery(args: ThreadSearchArgs): ThreadSearchQuery {
   return {
     limitPerGroup: args.limitPerGroup,
     query: args.query,
+    ...(args.includeHidden === undefined
+      ? {}
+      : { includeHidden: args.includeHidden ? "true" : "false" }),
   };
 }
 

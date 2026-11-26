@@ -1301,8 +1301,14 @@ function ProjectListComponent({
 }: ProjectListProps) {
   const sdk = useSdk();
   const navigate = useBbNavigate();
-  const { status, sections, projects, personalProject, archived } =
-    useSidebarData();
+  const {
+    status,
+    sections,
+    projects,
+    personalProject,
+    archived,
+    hiddenChildren,
+  } = useSidebarData();
   const personalProjectId = personalProject?.id ?? null;
   const threads = useMemo<SidebarThread[]>(
     () => projects.flatMap((project) => project.threads),
@@ -1787,6 +1793,27 @@ function ProjectListComponent({
             />
           )}
         />
+        {hiddenChildren !== null &&
+          status === "ready" &&
+          hiddenChildren.status !== "ready" && (
+            <>
+              <div role="status">
+                {hiddenChildren.status === "error"
+                  ? "Hidden children unavailable"
+                  : "Loading hidden children…"}
+              </div>
+              {hiddenChildren.status === "error" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void hiddenChildren.retry()}
+                  aria-label="Retry loading hidden children"
+                >
+                  Retry loading
+                </Button>
+              )}
+            </>
+          )}
         {archived !== null && (
           <>
             {status === "ready" && archived.status !== "ready" && (

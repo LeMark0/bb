@@ -13,13 +13,31 @@ interface MachineThreadGroup {
   threads: SidebarThread[];
 }
 
+export function resolveMachineGroupThread(
+  thread: SidebarThread,
+  threadById: ReadonlyMap<string, SidebarThread>,
+): SidebarThread {
+  const visited = new Set<string>();
+  let current = thread;
+  while (current.isHidden && current.parentThreadId !== null) {
+    visited.add(current.id);
+    const parent = threadById.get(current.parentThreadId);
+    if (parent === undefined || visited.has(parent.id)) break;
+    current = parent;
+  }
+  return current;
+}
+
 export function buildMachineThreadGroups(
   threads: readonly SidebarThread[],
   hosts: readonly MachineHost[],
 ): MachineThreadGroup[] {
   const threadsByKey = new Map<string, SidebarThread[]>();
+  const threadById = new Map(threads.map((thread) => [thread.id, thread]));
   for (const thread of threads) {
-    const key = thread.host?.id ?? NO_MACHINE_GROUP_KEY;
+    const key =
+      resolveMachineGroupThread(thread, threadById).host?.id ??
+      NO_MACHINE_GROUP_KEY;
     const existing = threadsByKey.get(key);
     if (existing) {
       existing.push(thread);

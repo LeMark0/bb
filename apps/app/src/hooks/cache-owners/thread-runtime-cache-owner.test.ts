@@ -131,6 +131,7 @@ describe("thread runtime cache owner", () => {
         projectId: undefined,
       });
       const searchKey = threadSearchQueryKey({
+        includeHidden: false,
         query: "work",
         limitPerGroup: 20,
       });

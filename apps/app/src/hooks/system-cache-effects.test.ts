@@ -113,6 +113,7 @@ describe("system cache effects", () => {
     const pendingInteractionsKey =
       threadPendingInteractionsQueryKey("thread-1");
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "needle",
     });

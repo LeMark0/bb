@@ -6,7 +6,7 @@ description: "Inspect or change the sidebar thread list's layout preferences: or
 # Thread list preferences
 
 The Thread list plugin owns the sidebar's layout state. Read it with
-`bb thread-list prefs list --json`; keys are `showProviderIcons`, `threadLifecycles`, `organizationMode`,
+`bb thread-list prefs list --json`; keys are `showProviderIcons`, `threadLifecycles`, `showHiddenChildren`, `organizationMode`,
 `environmentGrouping`, `groupByReadStatus`, `chronologicalSort`, `sortDirection`, `sectionOrder`,
 `manualSectionOrder`, `machineSectionOrder`, `hiddenGroups` (including the
 built-in `threads` group), `rowActions`,
@@ -55,6 +55,13 @@ remain selected. `bb thread-list prefs set threadLifecycles '["archived"]'`
 shows archived threads, and `'["active","archived"]'` shows both. The default
 is `'["active"]'`. Archived results load in pages; use Show more at the end
 of the list. The same preference is available through `setPreference` RPC.
+
+The Filter menu's Hidden children item, `bb thread-list prefs set
+showHiddenChildren true`, also lists hidden threads under their parent for the
+selected lifecycles, including children that belong to another project and
+their own children. Hidden root threads, such as side chats, stay out of the
+list. The default is `false`; changing it only changes what the list shows,
+never a thread's visibility, parent or archive state.
 
 `rowActions` picks up to three quick-action buttons a thread row shows on
 hover, left to right before its actions menu, as thread action keys: bb's

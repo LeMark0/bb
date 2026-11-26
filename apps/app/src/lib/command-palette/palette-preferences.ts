@@ -6,6 +6,17 @@ export const paletteThreadLifecyclesAtom = createThreadArchiveFilterAtom(
   "bb.palette.threadArchiveFilter",
 );
 
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+export const paletteThreadIncludeHiddenAtom = atomWithStorage<boolean>(
+  "bb.palette.threadIncludeHidden",
+  false,
+  createJsonLocalStorage(isBoolean),
+  { getOnInit: true },
+);
+
 export const PALETTE_THREAD_SORT_OPTIONS = [
   { value: "relevance", label: "Relevance" },
   { value: "updated", label: "Updated at" },

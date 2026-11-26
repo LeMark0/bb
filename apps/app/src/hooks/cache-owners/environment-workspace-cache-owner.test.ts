@@ -177,6 +177,7 @@ describe("applyEnvironmentUpdateResult", () => {
   it("invalidates cached thread search rows that render environment metadata", () => {
     const queryClient = makeQueryClient();
     const threadSearchKey = threadSearchQueryKey({
+      includeHidden: false,
       limitPerGroup: 20,
       query: "renamed",
     });

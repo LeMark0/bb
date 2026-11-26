@@ -6,6 +6,8 @@ import {
 } from "../model/fixtures.js";
 import { buildPinnedSidebarState } from "../model/pinned-sidebar-threads.js";
 import type { SidebarThread } from "../model/sidebar-thread.js";
+import { sectionKeyForThreadSection } from "../model/section-keys.js";
+import { CHRONOLOGICAL_CONTAINER_ID } from "../model/project-thread-groups.js";
 import {
   INITIAL_SIDEBAR_THREAD_REVEAL_STATE,
   resolveThreadRevealExpansion,
@@ -194,5 +196,36 @@ describe("useSidebarThreadReveal", () => {
       "env_parent",
     ]);
     expect(expansion).toEqual({ sidebarSectionId: "pinned" });
+  });
+
+  it("reveals the custom section and machine where a nested hidden child renders", () => {
+    const parent = thread("parent", {
+      sectionId: "section-a",
+      host: { id: "host_a", name: "Laptop" },
+    });
+    const child = thread("hidden_child", {
+      parentThreadId: "parent",
+      sectionId: null,
+      isHidden: true,
+      host: { id: "host_b", name: "Desktop" },
+    });
+    const threadById = new Map([parent, child].map((item) => [item.id, item]));
+    const reveal = (organizationMode: "chronological" | "machine") =>
+      resolveThreadRevealExpansion({
+        thread: child,
+        threadById,
+        effectivePinnedThreadIds: new Set(),
+        organizationMode,
+        personalProjectId: "proj_personal",
+      });
+
+    expect([...reveal("chronological").threadIdsToExpand]).toEqual(["parent"]);
+    expect(reveal("chronological").expansion).toEqual({
+      sectionKey: sectionKeyForThreadSection(
+        CHRONOLOGICAL_CONTAINER_ID,
+        "section-a",
+      ),
+    });
+    expect(reveal("machine").expansion).toEqual({ machineKey: "host_a" });
   });
 });

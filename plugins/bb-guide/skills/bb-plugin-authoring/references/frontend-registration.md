@@ -227,6 +227,8 @@ and ref it receives onto your button, or the menu never opens. `experimental_use
 actions for quick-action buttons, and
 `experimental_useThreadActionRegistrations()` lists every action's static
 title and icon for a picker. Keys are `bb--core/<id>` and `<pluginId>/<id>`.
+Set the target's optional `isHidden` from the thread's visibility (omitted
+means visible): bb hides Pin for hidden threads.
 
 ### A control in the Browser toolbar
 

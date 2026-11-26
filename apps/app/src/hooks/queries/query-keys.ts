@@ -94,12 +94,14 @@ export interface ThreadListQueryFilters {
   sourceThreadId?: string;
   originKind?: ThreadListFilters["originKind"];
   archived: boolean;
+  includeHidden?: boolean;
   limit?: number;
 }
 
 interface ThreadSearchQueryFilters {
   query: ThreadSearchFilters["query"];
   limitPerGroup: NonNullable<ThreadSearchFilters["limitPerGroup"]>;
+  includeHidden: boolean;
 }
 
 export type ArchivedThreadsKindFilter = "all" | "root" | "child";

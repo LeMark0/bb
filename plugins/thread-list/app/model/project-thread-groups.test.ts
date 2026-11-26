@@ -189,6 +189,39 @@ describe("buildProjectThreadGroups", () => {
     expect(findNode(rootItems, "thr_sidechat")).toBeNull();
   });
 
+  it("nests hidden descendants under their parent and keeps hidden roots out", () => {
+    const rootItems = buildProjectThreadGroups([
+      createThread({ id: "thr_parent", createdAt: 10, latestAttentionAt: 10 }),
+      createThread({
+        id: "thr_hidden_child",
+        parentThreadId: "thr_parent",
+        isHidden: true,
+        createdAt: 20,
+        latestAttentionAt: 20,
+      }),
+      createThread({
+        id: "thr_hidden_grandchild",
+        parentThreadId: "thr_hidden_child",
+        isHidden: true,
+        createdAt: 30,
+        latestAttentionAt: 30,
+      }),
+      createThread({
+        id: "thr_hidden_root",
+        isHidden: true,
+        createdAt: 40,
+        latestAttentionAt: 40,
+      }),
+    ]);
+
+    expect(rootItems).toHaveLength(1);
+    expect(findNode(rootItems, "thr_parent")?.depth).toBe(0);
+    expect(findNode(rootItems, "thr_hidden_child")?.depth).toBe(1);
+    expect(findNode(rootItems, "thr_hidden_grandchild")?.depth).toBe(2);
+    expect(findNode(rootItems, "thr_parent")?.stats.childCount).toBe(2);
+    expect(findNode(rootItems, "thr_hidden_root")).toBeNull();
+  });
+
   it("keeps orphaned children as project roots", () => {
     const rootItems = buildProjectThreadGroups([
       createThread({

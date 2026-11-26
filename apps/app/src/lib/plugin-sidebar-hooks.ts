@@ -41,7 +41,10 @@ import {
   useEnvironmentPullRequest,
 } from "@/hooks/queries/environment-queries";
 import { useHosts } from "@/hooks/queries/host-queries";
-import { useArchivedThreads } from "@/hooks/queries/thread-queries";
+import {
+  useArchivedThreads,
+  useHiddenChildThreads,
+} from "@/hooks/queries/thread-queries";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
 import {
   archivedThreadsListQueryKey,
@@ -117,12 +120,98 @@ function toPluginSidebarThreadCached(
   return thread;
 }
 
+function selectReachableHiddenChildren(
+  listed: ReadonlyMap<string, ThreadListEntry>,
+  candidates: ReadonlyMap<string, ThreadListEntry>,
+): ThreadListEntry[] {
+  const reachable = new Map<string, boolean>();
+  const isReachable = (thread: ThreadListEntry): boolean => {
+    const chain: string[] = [];
+    let current: ThreadListEntry | undefined = thread;
+    let result = false;
+    while (current !== undefined) {
+      const known = reachable.get(current.id);
+      if (known !== undefined) {
+        result = known;
+        break;
+      }
+      if (chain.includes(current.id)) break;
+      chain.push(current.id);
+      const parentId = current.parentThreadId;
+      if (parentId === null) break;
+      if (listed.has(parentId)) {
+        result = true;
+        break;
+      }
+      current = candidates.get(parentId);
+    }
+    for (const id of chain) reachable.set(id, result);
+    return result;
+  };
+  return [...candidates.values()].filter(
+    (thread) => !listed.has(thread.id) && isReachable(thread),
+  );
+}
+
+function addHiddenChildCandidates(
+  candidates: Map<string, ThreadListEntry>,
+  threads: readonly ThreadListEntry[] | undefined,
+  archived: boolean,
+): void {
+  for (const thread of threads ?? []) {
+    if (thread.visibility !== "hidden") continue;
+    if ((thread.archivedAt !== null) !== archived) continue;
+    candidates.set(thread.id, thread);
+  }
+}
+
 export function useSidebarThreads(
   options?: Parameters<PluginSdkApp["experimental_useSidebarThreads"]>[0],
 ): PluginSidebarThreadsState {
   const lifecycles = options?.experimental_lifecycles;
   const active = !lifecycles?.length || lifecycles.includes("active");
   const includeArchived = lifecycles?.includes("archived") ?? false;
+  const includeHiddenChildren =
+    options?.experimental_includeHiddenChildren === true;
+  const activeHiddenChildren = useHiddenChildThreads({
+    archived: false,
+    enabled: includeHiddenChildren && active,
+  });
+  const archivedHiddenChildren = useHiddenChildThreads({
+    archived: true,
+    enabled: includeHiddenChildren && includeArchived,
+  });
+  const refetchActiveHiddenChildren = activeHiddenChildren.refetch;
+  const refetchArchivedHiddenChildren = archivedHiddenChildren.refetch;
+  const retryHiddenChildren = useCallback(async () => {
+    await Promise.all([
+      ...(active ? [refetchActiveHiddenChildren()] : []),
+      ...(includeArchived ? [refetchArchivedHiddenChildren()] : []),
+    ]);
+  }, [
+    active,
+    includeArchived,
+    refetchActiveHiddenChildren,
+    refetchArchivedHiddenChildren,
+  ]);
+  const hiddenChildQueries = [
+    ...(active ? [activeHiddenChildren] : []),
+    ...(includeArchived ? [archivedHiddenChildren] : []),
+  ];
+  const hiddenChildrenStatus = hiddenChildQueries.some((query) => query.isError)
+    ? "error"
+    : hiddenChildQueries.some((query) => query.data === undefined)
+      ? "loading"
+      : "ready";
+  const hiddenChildrenState = useMemo<
+    PluginSidebarThreadsState["experimental_hiddenChildren"]
+  >(
+    () =>
+      includeHiddenChildren
+        ? { status: hiddenChildrenStatus, retry: retryHiddenChildren }
+        : null,
+    [includeHiddenChildren, hiddenChildrenStatus, retryHiddenChildren],
+  );
   const archived = useArchivedThreads({}, { enabled: includeArchived });
   const fetchArchivedPage = archived.fetchNextPage;
   const fetchNextPage = useCallback(async () => {
@@ -166,6 +255,7 @@ export function useSidebarThreads(
     if (data === undefined) {
       return {
         experimental_archived: archiveState,
+        experimental_hiddenChildren: hiddenChildrenState,
         status: query.isError ? "error" : "loading",
         threads: EMPTY_THREADS,
         experimental_hosts: hosts ?? [],
@@ -187,8 +277,24 @@ export function useSidebarThreads(
         }
       }
     }
+    if (includeHiddenChildren) {
+      const candidates = new Map<string, ThreadListEntry>();
+      if (active) {
+        addHiddenChildCandidates(candidates, activeHiddenChildren.data, false);
+      }
+      if (includeArchived) {
+        addHiddenChildCandidates(candidates, archivedHiddenChildren.data, true);
+      }
+      for (const thread of selectReachableHiddenChildren(
+        selected,
+        candidates,
+      )) {
+        selected.set(thread.id, thread);
+      }
+    }
     return {
       experimental_archived: archiveState,
+      experimental_hiddenChildren: hiddenChildrenState,
       status: !active && archiveState !== null ? archiveState.status : "ready",
       threads: [...selected.values()].map((thread) =>
         toPluginSidebarThreadCached(thread, hostNamesById, titleResources),
@@ -213,6 +319,10 @@ export function useSidebarThreads(
     includeArchived,
     archived.data,
     archiveState,
+    includeHiddenChildren,
+    activeHiddenChildren.data,
+    archivedHiddenChildren.data,
+    hiddenChildrenState,
   ]);
 }
 
@@ -243,7 +353,7 @@ const archivedEntryMaps = new WeakMap<
   >
 >();
 
-function useThreadEntryMap(): ReadonlyMap<string, ThreadListEntry> {
+function useListedThreadEntryMap(): ReadonlyMap<string, ThreadListEntry> {
   const { data } = useSidebarNavigation();
   const archived = useArchivedThreads({}, { enabled: false });
   return useMemo(() => {
@@ -265,6 +375,29 @@ function useThreadEntryMap(): ReadonlyMap<string, ThreadListEntry> {
     maps.set(active, entries);
     return entries;
   }, [data, archived.data]);
+}
+
+function useThreadEntryMap(): ReadonlyMap<string, ThreadListEntry> {
+  const entries = useListedThreadEntryMap();
+  const activeHiddenChildren = useHiddenChildThreads({
+    archived: false,
+    enabled: false,
+  });
+  const archivedHiddenChildren = useHiddenChildThreads({
+    archived: true,
+    enabled: false,
+  });
+  return useMemo(() => {
+    const hiddenChildren = [
+      ...(activeHiddenChildren.data ?? []),
+      ...(archivedHiddenChildren.data ?? []),
+    ].filter((thread) => !entries.has(thread.id));
+    if (hiddenChildren.length === 0) return entries;
+    return new Map([
+      ...hiddenChildren.map((thread) => [thread.id, thread] as const),
+      ...entries,
+    ]);
+  }, [entries, activeHiddenChildren.data, archivedHiddenChildren.data]);
 }
 
 export function lookupCachedThread(
@@ -436,7 +569,7 @@ export function useSidebarThreadDraft(
 }
 
 export function useSidebarThreadDraftIds(): ReadonlySet<string> {
-  const entries = useThreadEntryMap();
+  const entries = useListedThreadEntryMap();
   const refs = useMemo(() => [...entries.values()], [entries]);
   const ids = usePromptDraftInputThreadIds(refs);
   return ids.size === 0 ? EMPTY_DRAFT_IDS : ids;

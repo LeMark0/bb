@@ -1136,7 +1136,7 @@ function ThreadDetailViewInternal(
     projectId,
     environmentId: thread?.environmentId ?? "",
     sectionId: thread?.sectionId ?? null,
-    pinned: thread?.pinnedAt != null,
+    pinned: thread?.pinnedAt != null && thread.visibility !== "hidden",
   });
   const { providers: registeredEnvironmentProviders } =
     useSystemEnvironmentProviders();

@@ -121,6 +121,24 @@ describe("buildPinnedSidebarState", () => {
     expect(rootIds(state)).toEqual(["child"]);
   });
 
+  it("keeps an explicitly pinned hidden child under its unpinned parent", () => {
+    const state = buildPinnedSidebarState({
+      threads: [
+        createThread({ id: "parent" }),
+        createThread({
+          id: "hidden_child",
+          parentThreadId: "parent",
+          isHidden: true,
+          pinnedAt: 1_000,
+          pinSortKey: "a",
+        }),
+      ],
+    });
+
+    expect(rootIds(state)).toEqual([]);
+    expect(state.effectivePinnedThreadIds.has("hidden_child")).toBe(false);
+  });
+
   it("does not pull source-derived forks in as pinned descendants", () => {
     const state = buildPinnedSidebarState({
       threads: [

@@ -301,11 +301,13 @@ describe("thread plugin metadata persistence", () => {
       searchThreadsWithPendingInteractionState(db, {
         query: "discoverable-metadata-title",
         limitPerGroup: 20,
+        includeHidden: false,
       }).active.results.map((result) => result.thread.id),
     ).toEqual([thread.id]);
     const privateResults = searchThreadsWithPendingInteractionState(db, {
       query: "metadata-only-search-marker",
       limitPerGroup: 20,
+      includeHidden: false,
     });
     expect(privateResults.active.total).toBe(0);
     expect(privateResults.archived.total).toBe(0);

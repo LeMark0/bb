@@ -36,6 +36,8 @@ function sortLabel(value: PaletteThreadSort): string {
 export function PaletteThreadViewMenu({
   lifecycles,
   onLifecyclesChange,
+  includeHidden,
+  onIncludeHiddenChange,
   sort,
   sortDirection,
   onSortChange,
@@ -43,6 +45,8 @@ export function PaletteThreadViewMenu({
 }: {
   lifecycles: readonly ThreadArchiveFilter[];
   onLifecyclesChange: (value: ThreadArchiveFilter[]) => void;
+  includeHidden: boolean;
+  onIncludeHiddenChange: (value: boolean) => void;
   sort: PaletteThreadSort;
   sortDirection: PaletteThreadSortDirection;
   onSortChange: (
@@ -74,7 +78,9 @@ export function PaletteThreadViewMenu({
           variant="ghost"
           size="sm"
           className="w-8 justify-center px-0 text-subtle-foreground"
-          aria-label={`Filter and sort: ${threadLifecycleFilterLabel(lifecycles)}, ${sortLabel(sort)}${
+          aria-label={`Filter and sort: ${threadLifecycleFilterLabel(lifecycles)}${
+            includeHidden ? ", including hidden" : ""
+          }, ${sortLabel(sort)}${
             sort === "relevance" ? "" : `, ${sortDirection}`
           }`}
         >
@@ -100,6 +106,20 @@ export function PaletteThreadViewMenu({
             value={lifecycles}
             onChange={onLifecyclesChange}
           />
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            role="menuitemcheckbox"
+            aria-checked={includeHidden}
+            onSelect={(event) => {
+              event.preventDefault();
+              onIncludeHiddenChange(!includeHidden);
+            }}
+          >
+            Hidden threads
+            <span className="ml-auto inline-flex size-4 items-center justify-center">
+              {includeHidden && <Icon name="Check" className="size-4" />}
+            </span>
+          </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup aria-label="Sort by">

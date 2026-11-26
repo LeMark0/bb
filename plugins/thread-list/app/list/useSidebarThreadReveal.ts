@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import type { SidebarThread } from "../model/sidebar-thread.js";
-import { NO_MACHINE_GROUP_KEY } from "../model/machine-thread-groups.js";
+import {
+  NO_MACHINE_GROUP_KEY,
+  resolveMachineGroupThread,
+} from "../model/machine-thread-groups.js";
 import { buildPinnedSidebarState } from "../model/pinned-sidebar-threads.js";
 import {
   CHRONOLOGICAL_CONTAINER_ID,
@@ -224,10 +227,14 @@ export function resolveThreadRevealExpansion({
     currentThread = parentThread;
     remainingHops -= 1;
   }
+  const containerThread =
+    organizationMode === "machine"
+      ? resolveMachineGroupThread(thread, threadById)
+      : (currentThread ?? thread);
   const expansion = getThreadSidebarExpansion({
     organizationMode,
     isPinned: effectivePinnedThreadIds.has(thread.id),
-    thread,
+    thread: containerThread,
     sidebarProjectId: resolveSidebarProjectId(thread, threadById),
     personalProjectId,
   });
@@ -281,7 +288,7 @@ function useSidebarThreadRevealCore({
     revealState.current = step.state;
     for (const threadId of step.revealIds) {
       const thread = threadById.get(threadId);
-      if (!thread || thread.isHidden) {
+      if (!thread) {
         continue;
       }
       const { threadIdsToExpand, environmentIdsToExpand, expansion } =

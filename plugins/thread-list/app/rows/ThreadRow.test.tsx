@@ -306,11 +306,15 @@ function hostThreadActions({
     const isArchived = thread.archivedAt !== null;
     return [
       entry("bb--core/copyLink", "Copy link", "Copy"),
-      entry(
-        "bb--core/pin",
-        thread.pinnedAt === null ? "Pin" : "Unpin",
-        thread.pinnedAt === null ? "Pin" : "PinOff",
-      ),
+      ...(thread.isHidden
+        ? []
+        : [
+            entry(
+              "bb--core/pin",
+              thread.pinnedAt === null ? "Pin" : "Unpin",
+              thread.pinnedAt === null ? "Pin" : "PinOff",
+            ),
+          ]),
       ...(thread.parentThreadId === null && !isArchived
         ? [entry("thread-list/move", "Move to section", "SectionMove")]
         : []),
@@ -510,6 +514,24 @@ describe("ThreadRow", () => {
     await waitFor(() =>
       expect(ran).toEqual([{ key: "bb--core/pin", threadId: "thr_test" }]),
     );
+  });
+
+  it("offers no Pin quick action on a revealed hidden child", () => {
+    getDefaultStore().set(preferenceValueAtom("rowActions"), [
+      "bb--core/pin",
+      "bb--core/archive",
+    ]);
+    renderThreadRow({
+      thread: createThread({
+        parentThreadId: "thr_parent",
+        isHidden: true,
+        pinnedAt: 3,
+      }),
+      threadActions: hostThreadActions(),
+    });
+    expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unpin" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
   });
 
   it("skips row action keys that have no action for the thread", () => {

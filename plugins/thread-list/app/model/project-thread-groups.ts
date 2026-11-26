@@ -64,7 +64,10 @@ export type ThreadComparator = ((
   compareItems?: ThreadItemComparator;
 };
 
-type SidebarProjectThreadShape = Pick<SidebarThread, "isHidden">;
+type SidebarProjectThreadShape = Pick<
+  SidebarThread,
+  "isHidden" | "parentThreadId"
+>;
 
 interface BuildThreadNodeArgs {
   ancestorThreadIds: ReadonlySet<string>;
@@ -437,7 +440,7 @@ export function buildSectionThreadList(
 export function isSidebarProjectThread(
   thread: SidebarProjectThreadShape,
 ): boolean {
-  return !thread.isHidden;
+  return !thread.isHidden || thread.parentThreadId !== null;
 }
 
 function bucketEnvironmentThreadGroups(

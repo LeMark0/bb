@@ -143,6 +143,13 @@ function isThreadListQueryFilters(
   ) {
     return false;
   }
+  if (
+    "includeHidden" in candidate &&
+    candidate.includeHidden !== undefined &&
+    typeof candidate.includeHidden !== "boolean"
+  ) {
+    return false;
+  }
 
   return true;
 }
@@ -542,7 +549,7 @@ function threadMatchesListFilters(
   ) {
     return false;
   }
-  if (thread.visibility === "hidden") {
+  if (thread.visibility === "hidden" && filters.includeHidden !== true) {
     return false;
   }
 

@@ -117,6 +117,7 @@ export interface ThreadSearchResults {
 export interface SearchThreadsWithPendingInteractionStateArgs {
   query: string;
   limitPerGroup: number;
+  includeHidden: boolean;
 }
 
 export interface UpsertThreadTitleSearchSegmentsArgs {
@@ -147,6 +148,7 @@ interface UpsertThreadSearchSegmentArgs extends UpsertThreadSearchSegmentInput {
 interface ListThreadSearchMatchRowsArgs {
   allTokensMatchQuery: string;
   anyTokenMatchQuery: string;
+  includeHidden: boolean;
   limitPerGroup: number;
   tokenMatchQueries: readonly string[];
 }
@@ -1019,6 +1021,9 @@ function listThreadSearchMatchRows(
           SELECT segmentRowid FROM all_token_segments
         ) DESC,`
       : sql``;
+  const visibleThreadsOnly = args.includeHidden
+    ? sql``
+    : sql`AND t.visibility = 'visible'`;
 
   return db.all<ThreadSearchMatchRow>(sql`
     WITH all_token_segments AS MATERIALIZED (
@@ -1052,7 +1057,7 @@ function listThreadSearchMatchRows(
       FROM matching_threads
       JOIN threads AS t ON t.id = matching_threads.threadId
       WHERE t.deleted_at IS NULL
-        AND t.visibility = 'visible'
+        ${visibleThreadsOnly}
     ),
     ordered_threads AS (
       SELECT
@@ -1192,6 +1197,7 @@ export function searchThreadsWithPendingInteractionState(
   const rows = listThreadSearchMatchRows(db, {
     allTokensMatchQuery: tokenMatchQueries.join(" AND "),
     anyTokenMatchQuery,
+    includeHidden: args.includeHidden,
     limitPerGroup,
     tokenMatchQueries,
   });

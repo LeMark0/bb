@@ -157,7 +157,7 @@ export const CORE_THREAD_ACTIONS: readonly PluginThreadActionRegistration<unknow
               environmentId: environment.id,
               placement: {
                 sectionId: thread.sectionId,
-                pinned: thread.pinnedAt !== null,
+                pinned: thread.pinnedAt !== null && thread.isHidden !== true,
               },
               focusPrompt: true,
             }),
@@ -214,6 +214,7 @@ export const CORE_THREAD_ACTIONS: readonly PluginThreadActionRegistration<unknow
       title: "Pin",
       icon: "Pin",
       item: ({ thread, sdk }) => {
+        if (thread.isHidden === true) return null;
         const isPinned = thread.pinnedAt !== null;
         return {
           label: isPinned ? "Unpin" : "Pin",
